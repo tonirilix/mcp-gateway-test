@@ -1,16 +1,18 @@
 import { serve } from "@hono/node-server";
 import { once } from "node:events";
+import { createHash } from "node:crypto";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { createMcpHonoApp, localhostHostValidation } from "@modelcontextprotocol/hono";
-import { createMcpHandler, fromJsonSchema, McpServer, type JsonSchemaType } from "@modelcontextprotocol/server";
+import { createMcpHandler, fromJsonSchema, McpServer, type JsonSchemaType, type Tool } from "@modelcontextprotocol/server";
 import { getCookie, setCookie } from "hono/cookie";
 import { GatewayStore, type UserId } from "./gateway-store.js";
 
 type IntegrationConfig = { id: string; name: string; url: string };
-type Discovered = {
+type IntegrationRuntime = {
   config: IntegrationConfig;
-  client: Client;
-  tools: Awaited<ReturnType<Client["listTools"]>>["tools"];
+  tools: Tool[];
+  status: "available" | "unavailable";
+  capturedAt?: string;
 };
 
 type GatewayOptions = {
@@ -53,19 +55,40 @@ export async function startGatewayServer(options: GatewayOptions) {
   const configs: IntegrationConfig[] = [{ id: "gitlab", name: "GitLab", url: options.gitlabUrl }];
   if (options.analyticsUrl) configs.push({ id: "analytics", name: "Analytics", url: options.analyticsUrl });
 
-  const discovered: Discovered[] = [];
-  try {
-    for (const config of configs) {
-      const { client, transport } = makeClient(`gateway-discovery-${config.id}`, config.url);
+  const discovered: IntegrationRuntime[] = configs.map((config) => {
+    const cached = store.getCatalog(config.id);
+    return { config, tools: cached?.tools ?? [], status: "unavailable", capturedAt: cached?.capturedAt };
+  });
+
+  async function refresh(integration: IntegrationRuntime) {
+    const { config } = integration;
+    const { client, transport } = makeClient(`gateway-discovery-${config.id}`, config.url);
+    try {
       await client.connect(transport);
-      try {
-        const { tools } = await client.listTools();
-        discovered.push({ config, client, tools });
-      } catch (error) {
-        await client.close();
-        throw error;
-      }
+      const { tools } = await client.listTools();
+      const fingerprints = Object.fromEntries(tools.map((tool) => [
+        `${config.id}__${tool.name}`,
+        createHash("sha256").update(JSON.stringify({
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+          annotations: tool.annotations,
+          policy: policyFor(config.id, tool.name),
+        })).digest("hex"),
+      ]));
+      await store.replaceCatalog(config.id, tools, fingerprints);
+      integration.tools = tools;
+      integration.status = "available";
+      integration.capturedAt = store.getCatalog(config.id)?.capturedAt;
+    } catch {
+      integration.status = "unavailable";
+    } finally {
+      await client.close();
     }
+    return integration.status;
+  }
+
+  try {
+    for (const integration of discovered) await refresh(integration);
 
     const handler = createMcpHandler(
       ({ requestInfo }) => {
@@ -75,7 +98,8 @@ export async function startGatewayServer(options: GatewayOptions) {
           { name: "mcp-gateway", version: "0.1.0" },
           { capabilities: { tools: {} } },
         );
-        for (const { config, tools } of discovered) {
+        for (const integration of discovered) {
+          const { config, tools } = integration;
           if (!store.hasCredential(userId, config.id)) continue;
           for (const tool of tools) {
             if (policyFor(config.id, tool.name).adminOnly && userId !== "admin") continue;
@@ -88,6 +112,7 @@ export async function startGatewayServer(options: GatewayOptions) {
                 annotations: tool.annotations,
               },
               async (args) => {
+                if (integration.status === "unavailable") throw new Error("Downstream integration is unavailable");
                 const credential = store.getCredential(userId, config.id);
                 if (!credential) throw new Error("Integration is not connected");
                 const { client, transport } = makeClient(`gateway-call-${config.id}`, config.url, credential);
@@ -176,14 +201,24 @@ export async function startGatewayServer(options: GatewayOptions) {
       return context.json({ enabled: body.enabled });
     });
 
+    app.post("/api/integrations/:id/refresh", async (context) => {
+      const userId = portalUser(getCookie(context, "gateway_session"));
+      if (!userId) return context.json({ error: "Sign in required" }, 401);
+      const integration = discovered.find(({ config }) => config.id === context.req.param("id"));
+      if (!integration) return context.json({ error: "Unknown integration" }, 404);
+      return context.json({ status: await refresh(integration) });
+    });
+
     app.get("/api/catalog", (context) => {
       const userId = portalUser(getCookie(context, "gateway_session"));
       if (!userId) return context.json({ error: "Sign in required" }, 401);
       return context.json({
-        integrations: discovered.map(({ config, tools }) => ({
+        integrations: discovered.map(({ config, tools, status, capturedAt }) => ({
           id: config.id,
           name: config.name,
-          status: "available",
+          status,
+          stale: status === "unavailable" && Boolean(capturedAt),
+          lastRefreshedAt: capturedAt,
           connected: store.hasCredential(userId, config.id),
           tools: tools.map((tool) => ({
             name: `${config.id}__${tool.name}`,
@@ -217,11 +252,9 @@ export async function startGatewayServer(options: GatewayOptions) {
           httpServer.close((error) => (error ? reject(error) : resolve()));
         });
         await handler.close();
-        await Promise.all(discovered.map(({ client }) => client.close()));
       },
     };
   } catch (error) {
-    await Promise.all(discovered.map(({ client }) => client.close()));
     throw error;
   }
 }

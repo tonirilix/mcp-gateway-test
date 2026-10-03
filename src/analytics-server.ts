@@ -74,9 +74,12 @@ export async function startAnalyticsServer({ port }: { port: number }) {
   const address = httpServer.address();
   if (!address || typeof address === "string") throw new Error("Could not determine mock Analytics server address");
 
+  let closed = false;
   return {
     url: `http://127.0.0.1:${address.port}/mcp`,
     close: async () => {
+      if (closed) return;
+      closed = true;
       await new Promise<void>((resolve, reject) => {
         httpServer.close((error) => (error ? reject(error) : resolve()));
       });

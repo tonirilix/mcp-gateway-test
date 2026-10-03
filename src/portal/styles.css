@@ -16,6 +16,8 @@ p { line-height: 1.5; }
 .integration { background: #fff; border: 1px solid #dbe4ec; border-radius: 18px; padding: 28px; box-shadow: 0 8px 28px #1e38520b; }
 .status { background: #e0f4e8; color: #17603b; text-transform: capitalize; }
 .count { color: #63778b; margin: 20px 0; }
+.catalog-status { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 18px 0; }
+.catalog-status .count { margin: 0; }
 .tools { display: grid; gap: 12px; }
 .tool { border: 1px solid #e0e8ef; background: #f9fbfd; border-radius: 12px; padding: 18px; }
 .tool p { color: #53677a; margin: 10px 0 0; }

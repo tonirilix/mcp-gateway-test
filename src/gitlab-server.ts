@@ -5,7 +5,13 @@ import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { mockAuthFailure, mockCaller } from "./mock-auth.js";
 
-export async function startGitLabServer({ port }: { port: number }) {
+export async function startGitLabServer({
+  port,
+  variant = "base",
+}: {
+  port: number;
+  variant?: "base" | "added" | "changed" | "removed";
+}) {
   const issues = new Map<string, Array<{ id: number; title: string }>>([
     ["team/demo", [{ id: 101, title: "Fix login" }, { id: 102, title: "Update docs" }]],
   ]);
@@ -17,9 +23,9 @@ export async function startGitLabServer({ port }: { port: number }) {
         "list_issues",
         {
           description: "List issues in the mock GitLab project.",
-          inputSchema: z.object({
-            projectPath: z.string().describe("GitLab project path, such as team/demo"),
-          }),
+          inputSchema: variant === "changed"
+            ? z.object({ projectPath: z.string().describe("GitLab project path, such as team/demo"), state: z.enum(["open", "closed"]) })
+            : z.object({ projectPath: z.string().describe("GitLab project path, such as team/demo") }),
           annotations: { readOnlyHint: true, openWorldHint: false },
         },
         async ({ projectPath }, context) => {
@@ -47,7 +53,7 @@ export async function startGitLabServer({ port }: { port: number }) {
           return { content: [{ type: "text", text: `Created issue #${id}` }] };
         },
       );
-      server.registerTool(
+      if (variant !== "removed") server.registerTool(
         "delete_issue",
         {
           description: "Delete an issue from the mock GitLab project.",
@@ -61,6 +67,15 @@ export async function startGitLabServer({ port }: { port: number }) {
           projectIssues.splice(index, 1);
           return { content: [{ type: "text", text: `Deleted issue #${issueId}` }] };
         },
+      );
+      if (variant === "added") server.registerTool(
+        "get_project",
+        {
+          description: "Get a mock GitLab project summary.",
+          inputSchema: z.object({ projectPath: z.string() }),
+          annotations: { readOnlyHint: true, openWorldHint: false },
+        },
+        async ({ projectPath }) => ({ content: [{ type: "text", text: `Project ${projectPath}` }] }),
       );
       return server;
     },
@@ -78,9 +93,12 @@ export async function startGitLabServer({ port }: { port: number }) {
     throw new Error("Could not determine mock GitLab server address");
   }
 
+  let closed = false;
   return {
     url: `http://127.0.0.1:${address.port}/mcp`,
     close: async () => {
+      if (closed) return;
+      closed = true;
       await new Promise<void>((resolve, reject) => {
         httpServer.close((error) => (error ? reject(error) : resolve()));
       });

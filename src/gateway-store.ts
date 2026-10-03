@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import type { Tool } from "@modelcontextprotocol/server";
 
 export type UserId = "standard" | "admin";
 
@@ -13,7 +14,8 @@ type StoredUser = {
   enabledTools?: Record<string, boolean>;
 };
 
-type State = { users: Record<UserId, StoredUser> };
+type CatalogSnapshot = { tools: Tool[]; fingerprints: Record<string, string>; capturedAt: string };
+type State = { users: Record<UserId, StoredUser>; catalogs?: Record<string, CatalogSnapshot> };
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 
@@ -109,6 +111,25 @@ export class GatewayStore {
   async setEnabled(userId: UserId, toolName: string, enabled: boolean) {
     this.state.users[userId].enabledTools ??= {};
     this.state.users[userId].enabledTools[toolName] = enabled;
+    await this.save();
+  }
+
+  getCatalog(integrationId: string) {
+    return this.state.catalogs?.[integrationId];
+  }
+
+  async replaceCatalog(integrationId: string, tools: Tool[], fingerprints: Record<string, string>) {
+    const previous = this.state.catalogs?.[integrationId];
+    for (const userId of ["standard", "admin"] as const) {
+      const enabled = this.state.users[userId].enabledTools;
+      if (!enabled) continue;
+      for (const name of Object.keys(enabled)) {
+        if (!name.startsWith(`${integrationId}__`)) continue;
+        if (previous?.fingerprints[name] !== fingerprints[name]) delete enabled[name];
+      }
+    }
+    this.state.catalogs ??= {};
+    this.state.catalogs[integrationId] = { tools, fingerprints, capturedAt: new Date().toISOString() };
     await this.save();
   }
 

@@ -14,6 +14,8 @@ type CatalogIntegration = {
   id: string;
   name: string;
   status: "available" | "unavailable";
+  stale: boolean;
+  lastRefreshedAt?: string;
   connected: boolean;
   tools: CatalogTool[];
 };
@@ -110,6 +112,16 @@ export function App() {
     }
   }
 
+  async function refreshIntegration(id: string) {
+    setError(null);
+    try {
+      await readApi(`/api/integrations/${id}/refresh`, { method: "POST" });
+      await loadCatalog();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not refresh integration");
+    }
+  }
+
   async function signOut() {
     await readApi("/api/logout", { method: "POST" });
     setUser(null);
@@ -172,7 +184,11 @@ export function App() {
                     <div><p className="eyebrow">Integration</p><h2>{integration.name}</h2></div>
                     <span className="status">{integration.connected ? "Connected" : "Not connected"}</span>
                   </div>
-                  <p className="count">{integration.tools.length} discovered tool{integration.tools.length === 1 ? "" : "s"} · Server {integration.status}</p>
+                  <div className="catalog-status">
+                    <p className="count">{integration.tools.length} discovered tool{integration.tools.length === 1 ? "" : "s"} · Server {integration.status}{integration.stale ? " · Last-known catalog" : ""}</p>
+                    <button type="button" className="secondary" onClick={() => refreshIntegration(integration.id)}>Refresh tools</button>
+                  </div>
+                  {integration.stale && <p className="notice">These tool definitions were saved before the server became unavailable. Calls may fail until it returns.</p>}
                   <form className="credential-form" onSubmit={(event) => saveCredential(event, integration.id)}>
                     <label>Mock service token
                       <input
