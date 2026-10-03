@@ -5,6 +5,7 @@ type CatalogTool = {
   description?: string;
   inputSchema: unknown;
   behavior: "read" | "write";
+  enabled: boolean;
 };
 
 type CatalogIntegration = {
@@ -93,6 +94,20 @@ export function App() {
     }
   }
 
+  async function toggleTool(name: string, enabled: boolean) {
+    setError(null);
+    try {
+      await readApi(`/api/tools/${encodeURIComponent(name)}/enabled`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      await loadCatalog();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update tool");
+    }
+  }
+
   async function signOut() {
     await readApi("/api/logout", { method: "POST" });
     setUser(null);
@@ -176,6 +191,15 @@ export function App() {
                           <span className="behavior">{tool.behavior === "read" ? "Read only" : "Changes data"}</span>
                         </div>
                         <p>{tool.description}</p>
+                        <label className="tool-toggle">
+                          <input
+                            type="checkbox"
+                            checked={tool.enabled}
+                            disabled={!integration.connected}
+                            onChange={(event) => toggleTool(tool.name, event.target.checked)}
+                          />
+                          {tool.enabled ? "Enabled for me" : "Disabled for me"}
+                        </label>
                         <details><summary>Input schema</summary><pre>{JSON.stringify(tool.inputSchema, null, 2)}</pre></details>
                       </section>
                     ))}

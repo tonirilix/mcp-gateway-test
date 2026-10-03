@@ -6,6 +6,10 @@ import { z } from "zod";
 import { mockAuthFailure, mockCaller } from "./mock-auth.js";
 
 export async function startGitLabServer({ port }: { port: number }) {
+  const issues = new Map<string, Array<{ id: number; title: string }>>([
+    ["team/demo", [{ id: 101, title: "Fix login" }, { id: 102, title: "Update docs" }]],
+  ]);
+  let nextId = 103;
   const handler = createMcpHandler(
     () => {
       const server = new McpServer({ name: "mock-gitlab", version: "0.1.0" });
@@ -18,17 +22,45 @@ export async function startGitLabServer({ port }: { port: number }) {
           }),
           annotations: { readOnlyHint: true, openWorldHint: false },
         },
-        async ({ projectPath }, context) => ({
-          content: [
-            {
-              type: "text",
-              text:
-                projectPath === "team/demo"
-                  ? `${mockCaller(context.http?.req, "gl")}: #101 Fix login\n#102 Update docs`
-                  : `No issues found for ${projectPath}`,
-            },
-          ],
-        }),
+        async ({ projectPath }, context) => {
+          const found = issues.get(projectPath) ?? [];
+          return { content: [{
+            type: "text",
+            text: found.length
+              ? `${mockCaller(context.http?.req, "gl")}: ${found.map((issue) => `#${issue.id} ${issue.title}`).join("\n")}`
+              : `No issues found for ${projectPath}`,
+          }] };
+        },
+      );
+      server.registerTool(
+        "create_issue",
+        {
+          description: "Create an issue in the mock GitLab project.",
+          inputSchema: z.object({ projectPath: z.string(), title: z.string().min(1) }),
+          annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+        },
+        async ({ projectPath, title }) => {
+          const id = nextId++;
+          const projectIssues = issues.get(projectPath) ?? [];
+          projectIssues.push({ id, title });
+          issues.set(projectPath, projectIssues);
+          return { content: [{ type: "text", text: `Created issue #${id}` }] };
+        },
+      );
+      server.registerTool(
+        "delete_issue",
+        {
+          description: "Delete an issue from the mock GitLab project.",
+          inputSchema: z.object({ projectPath: z.string(), issueId: z.number().int() }),
+          annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+        },
+        async ({ projectPath, issueId }) => {
+          const projectIssues = issues.get(projectPath) ?? [];
+          const index = projectIssues.findIndex((issue) => issue.id === issueId);
+          if (index < 0) return { isError: true, content: [{ type: "text", text: `Issue #${issueId} not found` }] };
+          projectIssues.splice(index, 1);
+          return { content: [{ type: "text", text: `Deleted issue #${issueId}` }] };
+        },
       );
       return server;
     },

@@ -22,7 +22,7 @@ pnpm dev:portal
 
 The mock servers listen on `127.0.0.1:4101` and `127.0.0.1:4102`; the gateway listens on `127.0.0.1:4100`. Open the portal at `http://127.0.0.1:5173` and sign in as `standard` with the password from `.env`. Connect GitLab with the fictional token `gl-standard` (the admin's is `gl-admin`). Analytics uses `an-standard` or `an-admin`.
 
-Create a gateway access token in the portal. The token is shown once; copy it, then run the test client in another terminal:
+Enable `gitlab__list_issues` in the portal. Every tool starts disabled for each user. Create a gateway access token in the portal. The token is shown once; copy it, then run the test client in another terminal:
 
 ```sh
 GATEWAY_TOKEN=<paste-token> pnpm demo

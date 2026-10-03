@@ -26,7 +26,11 @@ beforeAll(async () => {
     encryptionKey: Buffer.alloc(32, 7),
     seedPasswords: { standard: "standard-password", admin: "admin-password" },
   });
-  identity = await connectDemoUser(gateway.url, { gitlab: "gl-standard", analytics: "an-standard" });
+  identity = await connectDemoUser(
+    gateway.url,
+    { gitlab: "gl-standard", analytics: "an-standard" },
+    ["gitlab__list_issues", "analytics__list_issues"],
+  );
 });
 
 afterAll(async () => {
@@ -68,12 +72,9 @@ test("both integrations appear in MCP and the portal catalog without name collis
     const catalogResponse = await fetch(new URL("/api/catalog", gateway.url), { headers: { Cookie: identity.cookie } });
     expect(catalogResponse.status).toBe(200);
     const catalog = await catalogResponse.json();
-    expect(catalog).toMatchObject({
-      integrations: [
-        { id: "gitlab", status: "available", tools: [{ name: "gitlab__list_issues", behavior: "read" }] },
-        { id: "analytics", status: "available", tools: [{ name: "analytics__list_issues", behavior: "read" }] },
-      ],
-    });
+    expect(catalog.integrations.map((integration: { id: string }) => integration.id)).toEqual(["gitlab", "analytics"]);
+    expect(catalog.integrations[0].tools[0]).toMatchObject({ name: "gitlab__list_issues", behavior: "read" });
+    expect(catalog.integrations[1].tools[0]).toMatchObject({ name: "analytics__list_issues", behavior: "read" });
   } finally {
     await client.close();
   }

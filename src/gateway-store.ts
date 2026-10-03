@@ -10,6 +10,7 @@ type StoredUser = {
   passwordHash: string;
   gatewayTokenHash?: string;
   credentials: Record<string, string>;
+  enabledTools?: Record<string, boolean>;
 };
 
 type State = { users: Record<UserId, StoredUser> };
@@ -50,7 +51,7 @@ export class GatewayStore {
 
     const makeUser = (role: UserId): StoredUser => {
       const salt = randomBytes(16).toString("base64");
-      return { role, passwordSalt: salt, passwordHash: passwordHash(options.seedPasswords[role], salt), credentials: {} };
+      return { role, passwordSalt: salt, passwordHash: passwordHash(options.seedPasswords[role], salt), credentials: {}, enabledTools: {} };
     };
     const store = new GatewayStore(options.file, options.key, {
       users: { standard: makeUser("standard"), admin: makeUser("admin") },
@@ -99,6 +100,16 @@ export class GatewayStore {
 
   hasCredential(userId: UserId, integrationId: string) {
     return Boolean(this.state.users[userId].credentials[integrationId]);
+  }
+
+  isEnabled(userId: UserId, toolName: string) {
+    return this.state.users[userId].enabledTools?.[toolName] === true;
+  }
+
+  async setEnabled(userId: UserId, toolName: string, enabled: boolean) {
+    this.state.users[userId].enabledTools ??= {};
+    this.state.users[userId].enabledTools[toolName] = enabled;
+    await this.save();
   }
 
   getCredential(userId: UserId, integrationId: string) {

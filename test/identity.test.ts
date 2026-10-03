@@ -52,6 +52,12 @@ async function configure(cookie: string, integration: string, credential: string
     body: JSON.stringify({ token: credential }),
   });
   expect(response.status).toBe(200);
+  const enabled = await fetch(new URL(`/api/tools/${integration}__list_issues/enabled`, gateway.url), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Cookie: cookie },
+    body: JSON.stringify({ enabled: true }),
+  });
+  expect(enabled.status).toBe(200);
 }
 
 async function issueToken(cookie: string) {

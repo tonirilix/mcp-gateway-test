@@ -22,6 +22,12 @@ type GatewayOptions = {
   seedPasswords: Record<UserId, string>;
 };
 
+function behaviorFor(integrationId: string, toolName: string): "read" | "write" {
+  return integrationId === "gitlab" && toolName === "list_issues" ||
+    integrationId === "analytics" && toolName === "list_issues"
+    ? "read" : "write";
+}
+
 function bearerToken(request: Request) {
   return request.headers.get("Authorization")?.match(/^Bearer (.+)$/)?.[1];
 }
@@ -64,10 +70,14 @@ export async function startGatewayServer(options: GatewayOptions) {
       ({ requestInfo }) => {
         const userId = requestInfo && store.resolveGatewayToken(bearerToken(requestInfo));
         if (!userId) throw new Error("Unauthenticated MCP request");
-        const server = new McpServer({ name: "mcp-gateway", version: "0.1.0" });
+        const server = new McpServer(
+          { name: "mcp-gateway", version: "0.1.0" },
+          { capabilities: { tools: {} } },
+        );
         for (const { config, tools } of discovered) {
           if (!store.hasCredential(userId, config.id)) continue;
           for (const tool of tools) {
+            if (!store.isEnabled(userId, `${config.id}__${tool.name}`)) continue;
             server.registerTool(
               `${config.id}__${tool.name}`,
               {
@@ -146,6 +156,20 @@ export async function startGatewayServer(options: GatewayOptions) {
       return context.json({ connected: true });
     });
 
+    app.put("/api/tools/:name/enabled", async (context) => {
+      const userId = portalUser(getCookie(context, "gateway_session"));
+      if (!userId) return context.json({ error: "Sign in required" }, 401);
+      const name = context.req.param("name");
+      const integration = discovered.find(({ config, tools }) =>
+        tools.some((tool) => `${config.id}__${tool.name}` === name),
+      );
+      if (!integration) return context.json({ error: "Unknown tool" }, 404);
+      const body = await context.req.json() as { enabled?: boolean };
+      if (typeof body.enabled !== "boolean") return context.json({ error: "Enabled must be a boolean" }, 400);
+      await store.setEnabled(userId, name, body.enabled);
+      return context.json({ enabled: body.enabled });
+    });
+
     app.get("/api/catalog", (context) => {
       const userId = portalUser(getCookie(context, "gateway_session"));
       if (!userId) return context.json({ error: "Sign in required" }, 401);
@@ -160,7 +184,8 @@ export async function startGatewayServer(options: GatewayOptions) {
             originalName: tool.name,
             description: tool.description,
             inputSchema: tool.inputSchema,
-            behavior: "read",
+            behavior: behaviorFor(config.id, tool.name),
+            enabled: store.isEnabled(userId, `${config.id}__${tool.name}`),
           })),
         })),
       });

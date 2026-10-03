@@ -40,4 +40,6 @@ button.secondary { background: #e8f0f8; color: #245b87; }
 .token-value code { color: #15263b; }
 .credential-form { display: flex; align-items: end; gap: 12px; margin-bottom: 22px; }
 .credential-form label { flex: 1; }
+.tool-toggle { display: inline-flex; align-items: center; gap: 8px; margin-top: 16px; color: #29577d; font-size: .85rem; font-weight: 700; cursor: pointer; }
+.tool-toggle input { width: 16px; height: 16px; margin: 0; }
 @media (max-width: 600px) { .page { padding-top: 36px; } .page-header, .tool-heading { align-items: flex-start; flex-direction: column; } .integration { padding: 20px; } }
