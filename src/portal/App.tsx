@@ -22,6 +22,16 @@ type CatalogIntegration = {
 
 type Catalog = { integrations: CatalogIntegration[] };
 type User = { id: string; role: string };
+type CallRecord = {
+  correlationId: string;
+  at: string;
+  userId: string;
+  integrationId: string;
+  exposedTool: string;
+  downstreamTool: string;
+  durationMs: number;
+  outcome: string;
+};
 
 async function readApi<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -33,6 +43,7 @@ async function readApi<T>(path: string, init?: RequestInit): Promise<T> {
 export function App() {
   const [user, setUser] = useState<User | null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [calls, setCalls] = useState<CallRecord[]>([]);
   const [username, setUsername] = useState("standard");
   const [password, setPassword] = useState("");
   const [credentials, setCredentials] = useState<Record<string, string>>({});
@@ -43,6 +54,11 @@ export function App() {
     setCatalog(await readApi<Catalog>("/api/catalog"));
   }
 
+  async function loadCalls() {
+    const result = await readApi<{ calls: CallRecord[] }>("/api/calls");
+    setCalls(result.calls);
+  }
+
   useEffect(() => {
     let active = true;
     readApi<{ user: User }>("/api/me")
@@ -50,6 +66,7 @@ export function App() {
         if (!active) return;
         setUser(current);
         await loadCatalog();
+        await loadCalls();
       })
       .catch(() => {});
     return () => { active = false; };
@@ -67,6 +84,7 @@ export function App() {
       setUser(result.user);
       setPassword("");
       await loadCatalog();
+      await loadCalls();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not sign in");
     }
@@ -126,6 +144,7 @@ export function App() {
     await readApi("/api/logout", { method: "POST" });
     setUser(null);
     setCatalog(null);
+    setCalls([]);
     setGatewayToken(null);
     setCredentials({});
     setError(null);
@@ -230,6 +249,28 @@ export function App() {
               ))}
             </section>
           )}
+          <section className="calls-card" aria-label="Recent calls">
+            <div className="calls-heading">
+              <div><p className="eyebrow">Audit trail</p><h2>Recent calls</h2></div>
+              <button type="button" className="secondary" onClick={() => loadCalls().catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Could not load calls"))}>Refresh calls</button>
+            </div>
+            {calls.length === 0 ? <p>No tool calls yet.</p> : (
+              <div className="table-scroll">
+                <table>
+                  <thead><tr><th>Caller</th><th>Tool route</th><th>Outcome</th><th>Duration</th><th>Correlation ID</th></tr></thead>
+                  <tbody>{calls.map((call) => (
+                    <tr key={call.correlationId}>
+                      <td>{call.userId}</td>
+                      <td>{call.exposedTool}<small>{call.integrationId} → {call.downstreamTool}</small></td>
+                      <td>{call.outcome.replaceAll("_", " ")}</td>
+                      <td>{call.durationMs} ms</td>
+                      <td><code>{call.correlationId}</code></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            )}
+          </section>
         </>
       )}
     </main>

@@ -47,4 +47,12 @@ button.secondary { background: #e8f0f8; color: #245b87; }
 .credential-form label { flex: 1; }
 .tool-toggle { display: inline-flex; align-items: center; gap: 8px; margin-top: 16px; color: #29577d; font-size: .85rem; font-weight: 700; cursor: pointer; }
 .tool-toggle input { width: 16px; height: 16px; margin: 0; }
+.calls-card { background: #fff; border: 1px solid #dbe4ec; border-radius: 18px; padding: 24px; margin-top: 28px; }
+.calls-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; text-align: left; font-size: .85rem; }
+th, td { padding: 12px; border-bottom: 1px solid #e0e8ef; vertical-align: top; }
+th { color: #53677a; }
+td small { display: block; color: #63778b; margin-top: 5px; }
+td code { font-size: .75rem; overflow-wrap: anywhere; }
 @media (max-width: 600px) { .page { padding-top: 36px; } .page-header, .tool-heading { align-items: flex-start; flex-direction: column; } .integration { padding: 20px; } }

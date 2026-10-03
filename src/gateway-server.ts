@@ -1,11 +1,12 @@
 import { serve } from "@hono/node-server";
 import { once } from "node:events";
-import { createHash } from "node:crypto";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { createHash, randomUUID } from "node:crypto";
+import { Client, SdkError, SdkErrorCode, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { createMcpHonoApp, localhostHostValidation } from "@modelcontextprotocol/hono";
 import { createMcpHandler, fromJsonSchema, McpServer, type JsonSchemaType, type Tool } from "@modelcontextprotocol/server";
 import { getCookie, setCookie } from "hono/cookie";
 import { GatewayStore, type UserId } from "./gateway-store.js";
+import { AuditLog, type CallOutcome } from "./audit-log.js";
 
 type IntegrationConfig = { id: string; name: string; url: string };
 type IntegrationRuntime = {
@@ -22,7 +23,15 @@ type GatewayOptions = {
   stateFile: string;
   encryptionKey: Buffer;
   seedPasswords: Record<UserId, string>;
+  downstreamTimeoutMs?: number;
 };
+
+function failureOutcome(error: unknown): CallOutcome {
+  if (error instanceof SdkError && error.code === SdkErrorCode.RequestTimeout) return "timeout";
+  if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) return "timeout";
+  if (error instanceof TypeError) return "unavailable";
+  return "protocol_failure";
+}
 
 function policyFor(integrationId: string, toolName: string) {
   const read = integrationId === "gitlab" && toolName === "list_issues" ||
@@ -52,6 +61,8 @@ export async function startGatewayServer(options: GatewayOptions) {
     key: options.encryptionKey,
     seedPasswords: options.seedPasswords,
   });
+  const audit = await AuditLog.open(`${options.stateFile}.audit.jsonl`);
+  const downstreamTimeoutMs = options.downstreamTimeoutMs ?? 2_000;
   const configs: IntegrationConfig[] = [{ id: "gitlab", name: "GitLab", url: options.gitlabUrl }];
   if (options.analyticsUrl) configs.push({ id: "analytics", name: "Analytics", url: options.analyticsUrl });
 
@@ -112,13 +123,40 @@ export async function startGatewayServer(options: GatewayOptions) {
                 annotations: tool.annotations,
               },
               async (args) => {
-                if (integration.status === "unavailable") throw new Error("Downstream integration is unavailable");
+                const correlationId = randomUUID();
+                const started = performance.now();
+                const finish = async (outcome: CallOutcome) => {
+                  await audit.record({
+                    correlationId, at: new Date().toISOString(), userId,
+                    integrationId: config.id,
+                    exposedTool: `${config.id}__${tool.name}`,
+                    downstreamTool: tool.name,
+                    durationMs: Math.round(performance.now() - started), outcome,
+                  });
+                };
+                const gatewayFailure = async (outcome: CallOutcome) => {
+                  await finish(outcome);
+                  return {
+                    isError: true,
+                    content: [{ type: "text" as const, text: `${outcome.replaceAll("_", " ")} (trace ${correlationId})` }],
+                    _meta: { "gateway/correlationId": correlationId, "gateway/outcome": outcome },
+                  };
+                };
+                if (integration.status === "unavailable") return gatewayFailure("unavailable");
                 const credential = store.getCredential(userId, config.id);
-                if (!credential) throw new Error("Integration is not connected");
+                if (!credential) return gatewayFailure("denied");
                 const { client, transport } = makeClient(`gateway-call-${config.id}`, config.url, credential);
                 try {
-                  await client.connect(transport);
-                  return await client.callTool({ name: tool.name, arguments: args as Record<string, unknown> });
+                  await client.connect(transport, { timeout: downstreamTimeoutMs });
+                  const result = await client.callTool(
+                    { name: tool.name, arguments: args as Record<string, unknown> },
+                    { timeout: downstreamTimeoutMs },
+                  );
+                  const outcome = result.isError ? "tool_error" : "success";
+                  await finish(outcome);
+                  return { ...result, _meta: { ...result._meta, "gateway/correlationId": correlationId, "gateway/outcome": outcome } };
+                } catch (error) {
+                  return await gatewayFailure(failureOutcome(error));
                 } finally {
                   await client.close();
                 }
@@ -233,9 +271,44 @@ export async function startGatewayServer(options: GatewayOptions) {
       });
     });
 
+    app.get("/api/calls", (context) => {
+      const userId = portalUser(getCookie(context, "gateway_session"));
+      if (!userId) return context.json({ error: "Sign in required" }, 401);
+      return context.json({ calls: audit.list(userId) });
+    });
+
     app.all("/mcp", async (context) => {
-      if (!store.resolveGatewayToken(bearerToken(context.req.raw))) {
+      const userId = store.resolveGatewayToken(bearerToken(context.req.raw));
+      if (!userId) {
         return context.text("Gateway token required", 401);
+      }
+      if (context.req.method === "POST" && context.req.header("Mcp-Method") === "tools/call") {
+        const request = await context.req.raw.clone().json().catch(() => null) as {
+          jsonrpc?: string; id?: string | number; method?: string;
+          params?: { name?: string };
+        } | null;
+        const name = request?.params?.name;
+        if (request?.method === "tools/call" && typeof name === "string" && context.req.header("Mcp-Name") === name) {
+          const integration = discovered.find(({ config, tools }) => tools.some((tool) => `${config.id}__${tool.name}` === name));
+          const originalName = integration?.tools.find((tool) => `${integration.config.id}__${tool.name}` === name)?.name;
+          const allowed = integration && originalName && store.hasCredential(userId, integration.config.id) &&
+            store.isEnabled(userId, name) && (!policyFor(integration.config.id, originalName).adminOnly || userId === "admin");
+          if (!allowed) {
+            const correlationId = randomUUID();
+            await audit.record({
+              correlationId, at: new Date().toISOString(), userId,
+              integrationId: integration?.config.id ?? "unknown",
+              exposedTool: name,
+              downstreamTool: originalName ?? "unknown",
+              durationMs: 0,
+              outcome: "denied",
+            });
+            return context.json({
+              jsonrpc: "2.0", id: request.id,
+              error: { code: -32001, message: `Tool unavailable (trace ${correlationId})` },
+            });
+          }
+        }
       }
       return await handler.fetch(context.req.raw);
     });

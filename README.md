@@ -34,6 +34,8 @@ The portal also shows mock Analytics user creation and deactivation. Only the se
 
 Use **Refresh tools** in the portal to repeat MCP discovery. If a downstream server is stopped, its last-known catalog remains visible and is marked stale. A newly discovered or materially changed tool starts disabled for each user.
 
+The portal's **Recent calls** section shows each tool route, outcome, duration, and correlation ID. Tool results also carry that ID in MCP metadata. Audit records are saved beside the local gateway state without credential values or tool arguments.
+
 For different ports, set `GITLAB_PORT`, `ANALYTICS_PORT`, `GATEWAY_PORT`, `GITLAB_MCP_URL`, `ANALYTICS_MCP_URL`, or `GATEWAY_MCP_URL` as needed. The local gateway state is stored in `.data/`, which is ignored by Git.
 
 Run `pnpm typecheck` and `pnpm test` to verify the slice. The end-to-end test starts both HTTP servers on temporary ports and checks the public gateway endpoint.

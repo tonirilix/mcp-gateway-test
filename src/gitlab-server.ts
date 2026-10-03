@@ -10,7 +10,7 @@ export async function startGitLabServer({
   variant = "base",
 }: {
   port: number;
-  variant?: "base" | "added" | "changed" | "removed";
+  variant?: "base" | "added" | "changed" | "removed" | "protocol_failure";
 }) {
   const issues = new Map<string, Array<{ id: number; title: string }>>([
     ["team/demo", [{ id: 101, title: "Fix login" }, { id: 102, title: "Update docs" }]],
@@ -29,6 +29,10 @@ export async function startGitLabServer({
           annotations: { readOnlyHint: true, openWorldHint: false },
         },
         async ({ projectPath }, context) => {
+          if (projectPath === "slow") await new Promise((resolve) => setTimeout(resolve, 500));
+          if (projectPath === "tool-error") {
+            return { isError: true, content: [{ type: "text", text: "Mock GitLab tool error" }] };
+          }
           const found = issues.get(projectPath) ?? [];
           return { content: [{
             type: "text",
@@ -84,7 +88,14 @@ export async function startGitLabServer({
 
   const app = createMcpHonoApp();
   app.use("*", localhostHostValidation());
-  app.all("/mcp", (context) => mockAuthFailure(context.req.raw, "gl") ?? handler.fetch(context.req.raw));
+  app.all("/mcp", async (context) => {
+    const rejected = mockAuthFailure(context.req.raw, "gl");
+    if (rejected) return rejected;
+    if (variant === "protocol_failure" && context.req.header("Mcp-Method") === "tools/call") {
+      return context.text("Mock downstream protocol failure", 500);
+    }
+    return await handler.fetch(context.req.raw);
+  });
 
   const httpServer = serve({ fetch: app.fetch, hostname: "127.0.0.1", port });
   if (!httpServer.listening) await once(httpServer, "listening");
