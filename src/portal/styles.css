@@ -20,6 +20,9 @@ p { line-height: 1.5; }
 .tool { border: 1px solid #e0e8ef; background: #f9fbfd; border-radius: 12px; padding: 18px; }
 .tool p { color: #53677a; margin: 10px 0 0; }
 .behavior { background: #e8f0f8; color: #29577d; }
+.tool-labels { display: flex; gap: 6px; flex-wrap: wrap; }
+.admin-label { border-radius: 999px; padding: 7px 11px; background: #f8e9d1; color: #8a510f; font-size: .78rem; font-weight: 700; white-space: nowrap; }
+.eligibility { font-size: .8rem; }
 details { margin-top: 14px; }
 summary { cursor: pointer; color: #29577d; font-size: .85rem; font-weight: 700; }
 pre { overflow-x: auto; background: #eaf0f5; border-radius: 8px; padding: 14px; font-size: .75rem; }

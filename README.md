@@ -30,6 +30,8 @@ GATEWAY_TOKEN=<paste-token> pnpm demo
 
 The client connects only to the gateway, lists the namespaced tools, and calls GitLab for `team/demo`. It should print the standard user's issues `#101 Fix login` and `#102 Update docs`.
 
+The portal also shows mock Analytics user creation and deactivation. Only the seeded admin may enable those tools; they change fictional Analytics users, never gateway accounts.
+
 For different ports, set `GITLAB_PORT`, `ANALYTICS_PORT`, `GATEWAY_PORT`, `GITLAB_MCP_URL`, `ANALYTICS_MCP_URL`, or `GATEWAY_MCP_URL` as needed. The local gateway state is stored in `.data/`, which is ignored by Git.
 
 Run `pnpm typecheck` and `pnpm test` to verify the slice. The end-to-end test starts both HTTP servers on temporary ports and checks the public gateway endpoint.

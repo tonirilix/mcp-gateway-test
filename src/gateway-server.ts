@@ -22,10 +22,11 @@ type GatewayOptions = {
   seedPasswords: Record<UserId, string>;
 };
 
-function behaviorFor(integrationId: string, toolName: string): "read" | "write" {
-  return integrationId === "gitlab" && toolName === "list_issues" ||
-    integrationId === "analytics" && toolName === "list_issues"
-    ? "read" : "write";
+function policyFor(integrationId: string, toolName: string) {
+  const read = integrationId === "gitlab" && toolName === "list_issues" ||
+    integrationId === "analytics" && (toolName === "list_issues" || toolName === "list_users");
+  const adminOnly = integrationId === "analytics" && (toolName === "create_user" || toolName === "deactivate_user");
+  return { behavior: read ? "read" as const : "write" as const, adminOnly };
 }
 
 function bearerToken(request: Request) {
@@ -77,6 +78,7 @@ export async function startGatewayServer(options: GatewayOptions) {
         for (const { config, tools } of discovered) {
           if (!store.hasCredential(userId, config.id)) continue;
           for (const tool of tools) {
+            if (policyFor(config.id, tool.name).adminOnly && userId !== "admin") continue;
             if (!store.isEnabled(userId, `${config.id}__${tool.name}`)) continue;
             server.registerTool(
               `${config.id}__${tool.name}`,
@@ -164,6 +166,10 @@ export async function startGatewayServer(options: GatewayOptions) {
         tools.some((tool) => `${config.id}__${tool.name}` === name),
       );
       if (!integration) return context.json({ error: "Unknown tool" }, 404);
+      const originalName = integration.tools.find((tool) => `${integration.config.id}__${tool.name}` === name)!.name;
+      if (policyFor(integration.config.id, originalName).adminOnly && userId !== "admin") {
+        return context.json({ error: "Admin access required" }, 403);
+      }
       const body = await context.req.json() as { enabled?: boolean };
       if (typeof body.enabled !== "boolean") return context.json({ error: "Enabled must be a boolean" }, 400);
       await store.setEnabled(userId, name, body.enabled);
@@ -184,7 +190,8 @@ export async function startGatewayServer(options: GatewayOptions) {
             originalName: tool.name,
             description: tool.description,
             inputSchema: tool.inputSchema,
-            behavior: behaviorFor(config.id, tool.name),
+            ...policyFor(config.id, tool.name),
+            eligible: !policyFor(config.id, tool.name).adminOnly || userId === "admin",
             enabled: store.isEnabled(userId, `${config.id}__${tool.name}`),
           })),
         })),

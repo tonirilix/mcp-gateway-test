@@ -6,6 +6,8 @@ type CatalogTool = {
   inputSchema: unknown;
   behavior: "read" | "write";
   enabled: boolean;
+  adminOnly: boolean;
+  eligible: boolean;
 };
 
 type CatalogIntegration = {
@@ -188,18 +190,22 @@ export function App() {
                       <section className="tool" key={tool.name}>
                         <div className="tool-heading">
                           <h3>{tool.name}</h3>
-                          <span className="behavior">{tool.behavior === "read" ? "Read only" : "Changes data"}</span>
+                          <span className="tool-labels">
+                            <span className="behavior">{tool.behavior === "read" ? "Read only" : "Changes data"}</span>
+                            {tool.adminOnly && <span className="admin-label">Admin only</span>}
+                          </span>
                         </div>
                         <p>{tool.description}</p>
                         <label className="tool-toggle">
                           <input
                             type="checkbox"
                             checked={tool.enabled}
-                            disabled={!integration.connected}
+                            disabled={!integration.connected || !tool.eligible}
                             onChange={(event) => toggleTool(tool.name, event.target.checked)}
                           />
                           {tool.enabled ? "Enabled for me" : "Disabled for me"}
                         </label>
+                        {!tool.eligible && <p className="eligibility">Your role cannot enable this tool.</p>}
                         <details><summary>Input schema</summary><pre>{JSON.stringify(tool.inputSchema, null, 2)}</pre></details>
                       </section>
                     ))}
