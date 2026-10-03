@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] The test client connects to the gateway's single HTTP MCP endpoint using the chosen protocol revision and lists a GitLab tool discovered from the downstream MCP server.
-- [ ] The exposed tool has a stable application-prefixed name and preserves its useful description and input schema.
-- [ ] Calling the exposed tool returns the mock GitLab result through the gateway, with an end-to-end check that exercises the public MCP endpoint.
-- [ ] A documented local run starts the processes needed for this slice and shows the successful call.
+- [x] The test client connects to the gateway's single HTTP MCP endpoint using the chosen protocol revision and lists a GitLab tool discovered from the downstream MCP server.
+- [x] The exposed tool has a stable application-prefixed name and preserves its useful description and input schema.
+- [x] Calling the exposed tool returns the mock GitLab result through the gateway, with an end-to-end check that exercises the public MCP endpoint.
+- [x] A documented local run starts the processes needed for this slice and shows the successful call.

@@ -1,0 +1,25 @@
+# Dependencies and generated output
+node_modules/
+dist/
+build/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Local credentials and runtime state
+.env
+.env.*
+!.env.example
+!.env.sample
+.local/
+.data/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+
+# Logs and machine-specific files
+*.log
+.DS_Store
+
+# Keep .scratch/ tracked: it is this project's local issue tracker.
