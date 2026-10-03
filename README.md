@@ -1,41 +1,51 @@
 # MCP Gateway Test
 
-A local learning project for an MCP gateway. GitLab and Analytics are mock downstream MCP servers. The gateway discovers and forwards their tools through one endpoint, and a small test client demonstrates the route. Both network hops use MCP over HTTP with the `2026-07-28` protocol revision.
+A local learning project for an MCP gateway. Coding clients use one MCP endpoint to reach tools from two fictional applications, GitLab and Analytics. The gateway discovers each downstream catalog through MCP, gives tools stable application-prefixed names, and forwards calls through MCP. A React portal shows integrations, per-user connections, tool opt-in, catalog state, and recent calls.
 
-## Requirements
+This project uses the MCP `2026-07-28` protocol revision on both sides of the gateway. The downstream services hold only mock data. Jira and the separate Agent Lab integration are later work.
 
-- Node.js 20 or newer
-- pnpm 11.9.0
+## Start locally
 
-## Run the first slice
+Requirements: Node.js 20 or newer and pnpm 11.9.0.
 
-Install dependencies with `pnpm install --frozen-lockfile`. Copy `.env.example` to `.env`, generate a 32-byte base64 key with `openssl rand -base64 32`, and set `GATEWAY_ENCRYPTION_KEY`, `STANDARD_PASSWORD`, and `ADMIN_PASSWORD` in `.env`. The key must be kept to reopen the local credential store.
+1. Run `pnpm install --frozen-lockfile`.
+2. Copy `.env.example` to `.env`. Generate a 32-byte base64 key with `openssl rand -base64 32` and set `GATEWAY_ENCRYPTION_KEY`, `STANDARD_PASSWORD`, and `ADMIN_PASSWORD` in `.env`.
+3. Run `pnpm dev` and open `http://127.0.0.1:5173`.
 
-Run these commands in separate terminals, in order:
+The single development command starts two mock MCP HTTP servers, the gateway, and the portal. The gateway is at `http://127.0.0.1:4100/mcp`. Keep the encryption key to reopen saved credentials. Local state and audit records live in ignored `.data/`. Changing the passwords in `.env` after first start does not change the seeded accounts; remove the local state to reset the demo.
 
-```sh
-pnpm dev:gitlab
-pnpm dev:analytics
-pnpm dev:gateway
-pnpm dev:portal
-```
+## Complete demo
 
-The mock servers listen on `127.0.0.1:4101` and `127.0.0.1:4102`; the gateway listens on `127.0.0.1:4100`. Open the portal at `http://127.0.0.1:5173` and sign in as `standard` with the password from `.env`. Connect GitLab with the fictional token `gl-standard` (the admin's is `gl-admin`). Analytics uses `an-standard` or `an-admin`.
+1. Sign in as **standard**. Connect GitLab with `gl-standard` and Analytics with `an-standard`. These are fictional service tokens accepted only by the mock servers.
+2. Enable `gitlab__list_issues`, `gitlab__create_issue`, and `analytics__list_issues`. Every tool starts disabled for each user.
+3. Create a gateway access token in the portal and copy it when shown. Run the client with that token:
 
-Enable `gitlab__list_issues` in the portal. Every tool starts disabled for each user. Create a gateway access token in the portal. The token is shown once; copy it, then run the test client in another terminal:
+   ```sh
+   GATEWAY_TOKEN=<standard-token> pnpm demo
+   GATEWAY_TOKEN=<standard-token> pnpm demo analytics__list_issues '{"workspace":"sales"}'
+   GATEWAY_TOKEN=<standard-token> pnpm demo gitlab__create_issue '{"projectPath":"team/demo","title":"Demo issue"}'
+   ```
 
-```sh
-GATEWAY_TOKEN=<paste-token> pnpm demo
-```
+   The client lists the effective tools and prints each result with its correlation ID. A GitLab issue call reaches the GitLab mock; the Analytics call reaches the Analytics mock.
 
-The client connects only to the gateway, lists the namespaced tools, and calls GitLab for `team/demo`. It should print the standard user's issues `#101 Fix login` and `#102 Update docs`.
+4. Sign out and sign in as **admin**. Connect Analytics with `an-admin`. Enable `analytics__list_users`, `analytics__create_user`, and `analytics__deactivate_user`, then create the admin's gateway token.
+5. Call the admin-only tools:
 
-The portal also shows mock Analytics user creation and deactivation. Only the seeded admin may enable those tools; they change fictional Analytics users, never gateway accounts.
+   ```sh
+   GATEWAY_TOKEN=<admin-token> pnpm demo analytics__create_user '{"name":"Casey","email":"casey@example.test"}'
+   GATEWAY_TOKEN=<admin-token> pnpm demo analytics__deactivate_user '{"userId":"U-2"}'
+   ```
 
-Use **Refresh tools** in the portal to repeat MCP discovery. If a downstream server is stopped, its last-known catalog remains visible and is marked stale. A newly discovered or materially changed tool starts disabled for each user.
+   The portal shows those tools to the standard user but does not let that user enable them. They manage fictional Analytics users, not gateway accounts. GitLab issue deletion is an ordinary write tool that a standard user can opt into.
 
-The portal's **Recent calls** section shows each tool route, outcome, duration, and correlation ID. Tool results also carry that ID in MCP metadata. Audit records are saved beside the local gateway state without credential values or tool arguments.
+6. Inspect **Recent calls** in the portal. Each entry shows the caller, exposed and downstream tool names, integration, duration, outcome, and correlation ID. Tool arguments and credential values are not recorded.
 
-For different ports, set `GITLAB_PORT`, `ANALYTICS_PORT`, `GATEWAY_PORT`, `GITLAB_MCP_URL`, `ANALYTICS_MCP_URL`, or `GATEWAY_MCP_URL` as needed. The local gateway state is stored in `.data/`, which is ignored by Git.
+To demonstrate an unavailable downstream server, stop `pnpm dev` and start the components in separate terminals using `pnpm dev:gitlab`, `pnpm dev:analytics`, `pnpm dev:gateway`, and `pnpm dev:portal`. Stop only Analytics, then click **Refresh tools** in the portal. Its last-known catalog is marked stale. Call a previously enabled Analytics tool with the client and compare the failure's correlation ID with **Recent calls**. A successful refresh after the server returns updates the catalog; new or materially changed tools start disabled.
 
-Run `pnpm typecheck` and `pnpm test` to verify the slice. The end-to-end test starts both HTTP servers on temporary ports and checks the public gateway endpoint.
+## Verify
+
+- `pnpm typecheck` checks TypeScript.
+- `pnpm test` runs end-to-end tests through the public MCP and portal HTTP interfaces, including one complete demo scenario.
+- `pnpm build` typechecks and builds the portal.
+
+The gateway and mock servers bind to loopback. Their ports and URLs can be changed with `GATEWAY_PORT`, `GITLAB_PORT`, `ANALYTICS_PORT`, `PORTAL_PORT`, `GITLAB_MCP_URL`, `ANALYTICS_MCP_URL`, and `GATEWAY_MCP_URL` where applicable.

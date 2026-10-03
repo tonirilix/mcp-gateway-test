@@ -5,11 +5,13 @@
   "type": "module",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
+    "dev": "tsx src/dev-main.ts",
     "dev:gitlab": "tsx src/gitlab-main.ts",
     "dev:analytics": "tsx src/analytics-main.ts",
     "dev:gateway": "tsx src/gateway-main.ts",
     "dev:portal": "vite",
     "demo": "tsx src/demo-client.ts",
+    "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
