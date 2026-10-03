@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { createMcpHonoApp, localhostHostValidation } from "@modelcontextprotocol/hono";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { mockAuthFailure, mockCaller } from "./mock-auth.js";
 
 export async function startAnalyticsServer({ port }: { port: number }) {
   const handler = createMcpHandler(
@@ -15,8 +16,8 @@ export async function startAnalyticsServer({ port }: { port: number }) {
           inputSchema: z.object({ workspace: z.string().describe("Analytics workspace name") }),
           annotations: { readOnlyHint: true, openWorldHint: false },
         },
-        async ({ workspace }) => ({
-          content: [{ type: "text", text: workspace === "sales" ? "AN-7 Pipeline lagging" : `No issues found for ${workspace}` }],
+        async ({ workspace }, context) => ({
+          content: [{ type: "text", text: workspace === "sales" ? `${mockCaller(context.http?.req, "an")}: AN-7 Pipeline lagging` : `No issues found for ${workspace}` }],
         }),
       );
       return server;
@@ -26,7 +27,7 @@ export async function startAnalyticsServer({ port }: { port: number }) {
 
   const app = createMcpHonoApp();
   app.use("*", localhostHostValidation());
-  app.all("/mcp", (context) => handler.fetch(context.req.raw));
+  app.all("/mcp", (context) => mockAuthFailure(context.req.raw, "an") ?? handler.fetch(context.req.raw));
 
   const httpServer = serve({ fetch: app.fetch, hostname: "127.0.0.1", port });
   if (!httpServer.listening) await once(httpServer, "listening");

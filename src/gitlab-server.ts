@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { createMcpHonoApp, localhostHostValidation } from "@modelcontextprotocol/hono";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { mockAuthFailure, mockCaller } from "./mock-auth.js";
 
 export async function startGitLabServer({ port }: { port: number }) {
   const handler = createMcpHandler(
@@ -17,13 +18,13 @@ export async function startGitLabServer({ port }: { port: number }) {
           }),
           annotations: { readOnlyHint: true, openWorldHint: false },
         },
-        async ({ projectPath }) => ({
+        async ({ projectPath }, context) => ({
           content: [
             {
               type: "text",
               text:
                 projectPath === "team/demo"
-                  ? "#101 Fix login\n#102 Update docs"
+                  ? `${mockCaller(context.http?.req, "gl")}: #101 Fix login\n#102 Update docs`
                   : `No issues found for ${projectPath}`,
             },
           ],
@@ -36,7 +37,7 @@ export async function startGitLabServer({ port }: { port: number }) {
 
   const app = createMcpHonoApp();
   app.use("*", localhostHostValidation());
-  app.all("/mcp", (context) => handler.fetch(context.req.raw));
+  app.all("/mcp", (context) => mockAuthFailure(context.req.raw, "gl") ?? handler.fetch(context.req.raw));
 
   const httpServer = serve({ fetch: app.fetch, hostname: "127.0.0.1", port });
   if (!httpServer.listening) await once(httpServer, "listening");
