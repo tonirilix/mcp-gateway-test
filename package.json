@@ -6,7 +6,9 @@
   "packageManager": "pnpm@11.9.0",
   "scripts": {
     "dev:gitlab": "tsx src/gitlab-main.ts",
+    "dev:analytics": "tsx src/analytics-main.ts",
     "dev:gateway": "tsx src/gateway-main.ts",
+    "dev:portal": "vite",
     "demo": "tsx src/demo-client.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
@@ -17,12 +19,17 @@
     "@modelcontextprotocol/hono": "2.0.2",
     "@modelcontextprotocol/server": "2.3.0",
     "hono": "^4.13.12",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
+    "vite": "^8.3.2",
     "vitest": "^5.0.3"
   }
 }

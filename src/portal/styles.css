@@ -1,0 +1,28 @@
+:root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #15263b; background: #f2f5f8; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+.page { max-width: 1040px; margin: 0 auto; padding: 64px 24px 96px; }
+.page-header, .integration-heading, .tool-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.page-header { align-items: center; margin-bottom: 44px; }
+h1, h2, h3, p { margin-top: 0; }
+h1 { font-size: clamp(2.2rem, 5vw, 3.5rem); letter-spacing: -.045em; margin-bottom: 12px; }
+h2 { font-size: 1.5rem; margin-bottom: 0; }
+h3 { font-size: 1rem; overflow-wrap: anywhere; margin-bottom: 0; }
+p { line-height: 1.5; }
+.eyebrow { color: #536d87; font-size: .75rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 8px; }
+.endpoint, .status, .behavior { border-radius: 999px; padding: 7px 11px; font-size: .78rem; font-weight: 700; white-space: nowrap; }
+.endpoint { background: #dce8f3; color: #214c76; font-family: ui-monospace, monospace; }
+.integrations { display: grid; gap: 22px; }
+.integration { background: #fff; border: 1px solid #dbe4ec; border-radius: 18px; padding: 28px; box-shadow: 0 8px 28px #1e38520b; }
+.status { background: #e0f4e8; color: #17603b; text-transform: capitalize; }
+.count { color: #63778b; margin: 20px 0; }
+.tools { display: grid; gap: 12px; }
+.tool { border: 1px solid #e0e8ef; background: #f9fbfd; border-radius: 12px; padding: 18px; }
+.tool p { color: #53677a; margin: 10px 0 0; }
+.behavior { background: #e8f0f8; color: #29577d; }
+details { margin-top: 14px; }
+summary { cursor: pointer; color: #29577d; font-size: .85rem; font-weight: 700; }
+pre { overflow-x: auto; background: #eaf0f5; border-radius: 8px; padding: 14px; font-size: .75rem; }
+.notice { padding: 18px; background: #fff; border-radius: 12px; }
+.error { color: #9d3030; }
+@media (max-width: 600px) { .page { padding-top: 36px; } .page-header, .tool-heading { align-items: flex-start; flex-direction: column; } .integration { padding: 20px; } }
