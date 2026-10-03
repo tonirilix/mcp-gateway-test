@@ -42,6 +42,8 @@ The single development command starts two mock MCP HTTP servers, the gateway, an
 
 To demonstrate an unavailable downstream server, stop `pnpm dev` and start the components in separate terminals using `pnpm dev:gitlab`, `pnpm dev:analytics`, `pnpm dev:gateway`, and `pnpm dev:portal`. Stop only Analytics, then click **Refresh tools** in the portal. Its last-known catalog is marked stale. Call a previously enabled Analytics tool with the client and compare the failure's correlation ID with **Recent calls**. A successful refresh after the server returns updates the catalog; new or materially changed tools start disabled.
 
+Gateway read/write labels come from explicit policy entries. A discovered tool without a policy remains visible as unclassified but cannot be enabled or called. Portal sessions expire after eight hours on the server as well as in the browser.
+
 ## Verify
 
 - `pnpm typecheck` checks TypeScript.

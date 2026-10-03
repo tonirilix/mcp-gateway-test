@@ -9,3 +9,4 @@
 | `wontfix` | `wontfix` |
 
 Use the local status string in each issue's `Status:` line.
+Use `resolved` for an issue whose acceptance criteria are complete; it is a terminal status outside the triage roles above.

@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-export type CallOutcome = "success" | "tool_error" | "timeout" | "unavailable" | "denied" | "protocol_failure";
+export type CallOutcome = "success" | "tool_error" | "invalid_arguments" | "timeout" | "unavailable" | "denied" | "protocol_failure";
 
 export type CallRecord = {
   correlationId: string;

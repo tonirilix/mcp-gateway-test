@@ -57,7 +57,21 @@ test("refresh preserves stale tools, discovers new ones disabled, and invalidate
     expect((await refresh()).status).toBe(200);
     const addedCatalog = (await catalog()).integrations[0];
     expect(addedCatalog).toMatchObject({ status: "available", stale: false });
-    expect(addedCatalog.tools.find((tool: { name: string }) => tool.name === "gitlab__get_project")).toMatchObject({ enabled: false });
+    expect(addedCatalog.tools.find((tool: { name: string }) => tool.name === "gitlab__get_project")).toMatchObject({
+      enabled: false, behavior: "read", eligible: true,
+    });
+
+    await gitlab.close();
+    gitlab = await startGitLabServer({ port: gitlabPort, variant: "unclassified" });
+    expect((await refresh()).status).toBe(200);
+    expect((await catalog()).integrations[0].tools.find((tool: { name: string }) => tool.name === "gitlab__unknown_action"))
+      .toMatchObject({ behavior: "unclassified", eligible: false, enabled: false });
+    const attemptedEnable = await fetch(new URL("/api/tools/gitlab__unknown_action/enabled", gateway.url), {
+      method: "PUT", headers: { Cookie: identity.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: true }),
+    });
+    expect(attemptedEnable.status).toBe(403);
+    expect((await client.listTools()).tools.map((tool) => tool.name)).not.toContain("gitlab__unknown_action");
 
     await gitlab.close();
     gitlab = await startGitLabServer({ port: gitlabPort, variant: "changed" });

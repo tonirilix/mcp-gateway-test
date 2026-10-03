@@ -4,7 +4,7 @@ type CatalogTool = {
   name: string;
   description?: string;
   inputSchema: unknown;
-  behavior: "read" | "write";
+  behavior: "read" | "write" | "unclassified";
   enabled: boolean;
   adminOnly: boolean;
   eligible: boolean;
@@ -226,7 +226,7 @@ export function App() {
                         <div className="tool-heading">
                           <h3>{tool.name}</h3>
                           <span className="tool-labels">
-                            <span className="behavior">{tool.behavior === "read" ? "Read only" : "Changes data"}</span>
+                            <span className="behavior">{tool.behavior === "read" ? "Read only" : tool.behavior === "write" ? "Changes data" : "Needs gateway policy"}</span>
                             {tool.adminOnly && <span className="admin-label">Admin only</span>}
                           </span>
                         </div>
@@ -240,7 +240,7 @@ export function App() {
                           />
                           {tool.enabled ? "Enabled for me" : "Disabled for me"}
                         </label>
-                        {!tool.eligible && <p className="eligibility">Your role cannot enable this tool.</p>}
+                        {!tool.eligible && <p className="eligibility">{tool.behavior === "unclassified" ? "The gateway needs a policy for this tool." : "Your role cannot enable this tool."}</p>}
                         <details><summary>Input schema</summary><pre>{JSON.stringify(tool.inputSchema, null, 2)}</pre></details>
                       </section>
                     ))}

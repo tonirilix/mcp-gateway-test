@@ -24,6 +24,7 @@ type GatewayOptions = {
   encryptionKey: Buffer;
   seedPasswords: Record<UserId, string>;
   downstreamTimeoutMs?: number;
+  portalSessionTtlMs?: number;
 };
 
 function failureOutcome(error: unknown): CallOutcome {
@@ -33,11 +34,19 @@ function failureOutcome(error: unknown): CallOutcome {
   return "protocol_failure";
 }
 
+const toolPolicies: Record<string, { behavior: "read" | "write"; adminOnly: boolean }> = {
+  gitlab__list_issues: { behavior: "read", adminOnly: false },
+  gitlab__get_project: { behavior: "read", adminOnly: false },
+  gitlab__create_issue: { behavior: "write", adminOnly: false },
+  gitlab__delete_issue: { behavior: "write", adminOnly: false },
+  analytics__list_issues: { behavior: "read", adminOnly: false },
+  analytics__list_users: { behavior: "read", adminOnly: false },
+  analytics__create_user: { behavior: "write", adminOnly: true },
+  analytics__deactivate_user: { behavior: "write", adminOnly: true },
+};
+
 function policyFor(integrationId: string, toolName: string) {
-  const read = integrationId === "gitlab" && toolName === "list_issues" ||
-    integrationId === "analytics" && (toolName === "list_issues" || toolName === "list_users");
-  const adminOnly = integrationId === "analytics" && (toolName === "create_user" || toolName === "deactivate_user");
-  return { behavior: read ? "read" as const : "write" as const, adminOnly };
+  return toolPolicies[`${integrationId}__${toolName}`];
 }
 
 function bearerToken(request: Request) {
@@ -60,6 +69,7 @@ export async function startGatewayServer(options: GatewayOptions) {
     file: options.stateFile,
     key: options.encryptionKey,
     seedPasswords: options.seedPasswords,
+    sessionTtlMs: options.portalSessionTtlMs,
   });
   const audit = await AuditLog.open(`${options.stateFile}.audit.jsonl`);
   const downstreamTimeoutMs = options.downstreamTimeoutMs ?? 2_000;
@@ -113,7 +123,8 @@ export async function startGatewayServer(options: GatewayOptions) {
           const { config, tools } = integration;
           if (!store.hasCredential(userId, config.id)) continue;
           for (const tool of tools) {
-            if (policyFor(config.id, tool.name).adminOnly && userId !== "admin") continue;
+            const policy = policyFor(config.id, tool.name);
+            if (!policy || (policy.adminOnly && userId !== "admin")) continue;
             if (!store.isEnabled(userId, `${config.id}__${tool.name}`)) continue;
             server.registerTool(
               `${config.id}__${tool.name}`,
@@ -178,7 +189,7 @@ export async function startGatewayServer(options: GatewayOptions) {
       const userId = store.authenticate(body.username ?? "", body.password ?? "");
       if (!userId) return context.json({ error: "Invalid username or password" }, 401);
       setCookie(context, "gateway_session", store.createSession(userId), {
-        httpOnly: true, sameSite: "Strict", path: "/", maxAge: 8 * 60 * 60,
+        httpOnly: true, sameSite: "Strict", path: "/", maxAge: Math.ceil((options.portalSessionTtlMs ?? 8 * 60 * 60 * 1000) / 1000),
       });
       return context.json({ user: { id: userId, role: userId } });
     });
@@ -230,7 +241,9 @@ export async function startGatewayServer(options: GatewayOptions) {
       );
       if (!integration) return context.json({ error: "Unknown tool" }, 404);
       const originalName = integration.tools.find((tool) => `${integration.config.id}__${tool.name}` === name)!.name;
-      if (policyFor(integration.config.id, originalName).adminOnly && userId !== "admin") {
+      const policy = policyFor(integration.config.id, originalName);
+      if (!policy) return context.json({ error: "Tool has no gateway policy" }, 403);
+      if (policy.adminOnly && userId !== "admin") {
         return context.json({ error: "Admin access required" }, 403);
       }
       const body = await context.req.json() as { enabled?: boolean };
@@ -258,15 +271,19 @@ export async function startGatewayServer(options: GatewayOptions) {
           stale: status === "unavailable" && Boolean(capturedAt),
           lastRefreshedAt: capturedAt,
           connected: store.hasCredential(userId, config.id),
-          tools: tools.map((tool) => ({
-            name: `${config.id}__${tool.name}`,
-            originalName: tool.name,
-            description: tool.description,
-            inputSchema: tool.inputSchema,
-            ...policyFor(config.id, tool.name),
-            eligible: !policyFor(config.id, tool.name).adminOnly || userId === "admin",
-            enabled: store.isEnabled(userId, `${config.id}__${tool.name}`),
-          })),
+          tools: tools.map((tool) => {
+            const policy = policyFor(config.id, tool.name);
+            return {
+              name: `${config.id}__${tool.name}`,
+              originalName: tool.name,
+              description: tool.description,
+              inputSchema: tool.inputSchema,
+              behavior: policy?.behavior ?? "unclassified",
+              adminOnly: policy?.adminOnly ?? false,
+              eligible: Boolean(policy && (!policy.adminOnly || userId === "admin")),
+              enabled: store.isEnabled(userId, `${config.id}__${tool.name}`),
+            };
+          }),
         })),
       });
     });
@@ -285,14 +302,15 @@ export async function startGatewayServer(options: GatewayOptions) {
       if (context.req.method === "POST" && context.req.header("Mcp-Method") === "tools/call") {
         const request = await context.req.raw.clone().json().catch(() => null) as {
           jsonrpc?: string; id?: string | number; method?: string;
-          params?: { name?: string };
+          params?: { name?: string; arguments?: unknown };
         } | null;
         const name = request?.params?.name;
         if (request?.method === "tools/call" && typeof name === "string" && context.req.header("Mcp-Name") === name) {
           const integration = discovered.find(({ config, tools }) => tools.some((tool) => `${config.id}__${tool.name}` === name));
           const originalName = integration?.tools.find((tool) => `${integration.config.id}__${tool.name}` === name)?.name;
-          const allowed = integration && originalName && store.hasCredential(userId, integration.config.id) &&
-            store.isEnabled(userId, name) && (!policyFor(integration.config.id, originalName).adminOnly || userId === "admin");
+          const policy = integration && originalName ? policyFor(integration.config.id, originalName) : undefined;
+          const allowed = integration && originalName && policy && store.hasCredential(userId, integration.config.id) &&
+            store.isEnabled(userId, name) && (!policy.adminOnly || userId === "admin");
           if (!allowed) {
             const correlationId = randomUUID();
             await audit.record({
@@ -306,6 +324,20 @@ export async function startGatewayServer(options: GatewayOptions) {
             return context.json({
               jsonrpc: "2.0", id: request.id,
               error: { code: -32001, message: `Tool unavailable (trace ${correlationId})` },
+            });
+          }
+          const tool = integration.tools.find((candidate) => candidate.name === originalName)!;
+          const validation = await fromJsonSchema(tool.inputSchema as JsonSchemaType)["~standard"].validate(request.params?.arguments ?? {});
+          if (validation.issues) {
+            const correlationId = randomUUID();
+            await audit.record({
+              correlationId, at: new Date().toISOString(), userId,
+              integrationId: integration.config.id, exposedTool: name,
+              downstreamTool: originalName, durationMs: 0, outcome: "invalid_arguments",
+            });
+            return context.json({
+              jsonrpc: "2.0", id: request.id,
+              error: { code: -32602, message: `Invalid tool arguments (trace ${correlationId})` },
             });
           }
         }

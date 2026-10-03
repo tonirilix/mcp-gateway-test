@@ -56,6 +56,10 @@ test("calls expose correlation IDs and audit distinct outcomes without secrets",
     expect(toolError.isError).toBe(true);
     expect(toolError._meta?.["gateway/outcome"]).toBe("tool_error");
 
+    await expect(client.callTool({
+      name: "gitlab__list_issues", arguments: { projectPath: 123 },
+    })).rejects.toThrow(/Invalid tool arguments \(trace [a-f0-9-]+\)/);
+
     const timeout = await call("slow");
     expect(timeout.isError).toBe(true);
     expect(timeout._meta?.["gateway/outcome"]).toBe("timeout");
@@ -82,7 +86,7 @@ test("calls expose correlation IDs and audit distinct outcomes without secrets",
 
     const calls = await records();
     expect(calls.map((record) => record.outcome)).toEqual([
-      "success", "tool_error", "timeout", "denied", "unavailable", "protocol_failure",
+      "success", "tool_error", "invalid_arguments", "timeout", "denied", "unavailable", "protocol_failure",
     ]);
     expect(calls[0]).toMatchObject({ userId: "standard", correlationId: successId });
     const auditText = await readFile(join(directory, "state.json.audit.jsonl"), "utf8");

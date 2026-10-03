@@ -30,23 +30,27 @@ function equalHex(left: string, right: string) {
 }
 
 export class GatewayStore {
-  private readonly sessions = new Map<string, UserId>();
+  private readonly sessions = new Map<string, { userId: UserId; expiresAt: number }>();
 
   private constructor(
     private readonly file: string,
     private readonly key: Buffer,
     private readonly state: State,
+    private readonly sessionTtlMs: number,
   ) {}
 
   static async open(options: {
     file: string;
     key: Buffer;
     seedPasswords: Record<UserId, string>;
+    sessionTtlMs?: number;
   }) {
     if (options.key.length !== 32) throw new Error("Gateway encryption key must contain 32 bytes");
+    const sessionTtlMs = options.sessionTtlMs ?? 8 * 60 * 60 * 1000;
+    if (sessionTtlMs <= 0) throw new Error("Portal session lifetime must be positive");
     try {
       const state = JSON.parse(await readFile(options.file, "utf8")) as State;
-      return new GatewayStore(options.file, options.key, state);
+      return new GatewayStore(options.file, options.key, state, sessionTtlMs);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
@@ -57,7 +61,7 @@ export class GatewayStore {
     };
     const store = new GatewayStore(options.file, options.key, {
       users: { standard: makeUser("standard"), admin: makeUser("admin") },
-    });
+    }, sessionTtlMs);
     await store.save();
     return store;
   }
@@ -71,12 +75,19 @@ export class GatewayStore {
 
   createSession(userId: UserId) {
     const token = randomBytes(32).toString("base64url");
-    this.sessions.set(token, userId);
+    this.sessions.set(token, { userId, expiresAt: Date.now() + this.sessionTtlMs });
     return token;
   }
 
   resolveSession(token: string | undefined) {
-    return token ? this.sessions.get(token) : undefined;
+    if (!token) return undefined;
+    const session = this.sessions.get(token);
+    if (!session) return undefined;
+    if (Date.now() >= session.expiresAt) {
+      this.sessions.delete(token);
+      return undefined;
+    }
+    return session.userId;
   }
 
   revokeSession(token: string | undefined) {

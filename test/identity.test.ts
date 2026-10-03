@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { startAnalyticsServer } from "../src/analytics-server.js";
@@ -125,5 +126,30 @@ test("missing or invalid gateway tokens cannot use MCP", async () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
     });
     expect(response.status).toBe(401);
+  }
+});
+
+test("portal rejects a replayed cookie after its server-side lifetime", async () => {
+  const shortLived = await startGatewayServer({
+    port: 0, gitlabUrl: gitlab.url, stateFile: join(directory, "short-lived.json"),
+    encryptionKey: Buffer.alloc(32, 7), seedPasswords: { standard: "standard-password", admin: "admin-password" },
+    portalSessionTtlMs: 25,
+  });
+  try {
+    const cookie = await (async () => {
+      const response = await fetch(new URL("/api/login", shortLived.url), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: "standard", password: "standard-password" }),
+      });
+      expect(response.status).toBe(200);
+      return response.headers.get("set-cookie")!.split(";")[0];
+    })();
+    await delay(40);
+    const response = await fetch(new URL("/api/token", shortLived.url), {
+      method: "POST", headers: { Cookie: cookie },
+    });
+    expect(response.status).toBe(401);
+  } finally {
+    await shortLived.close();
   }
 });

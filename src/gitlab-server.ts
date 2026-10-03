@@ -10,7 +10,7 @@ export async function startGitLabServer({
   variant = "base",
 }: {
   port: number;
-  variant?: "base" | "added" | "changed" | "removed" | "protocol_failure";
+  variant?: "base" | "added" | "unclassified" | "changed" | "removed" | "protocol_failure";
 }) {
   const issues = new Map<string, Array<{ id: number; title: string }>>([
     ["team/demo", [{ id: 101, title: "Fix login" }, { id: 102, title: "Update docs" }]],
@@ -80,6 +80,15 @@ export async function startGitLabServer({
           annotations: { readOnlyHint: true, openWorldHint: false },
         },
         async ({ projectPath }) => ({ content: [{ type: "text", text: `Project ${projectPath}` }] }),
+      );
+      if (variant === "unclassified") server.registerTool(
+        "unknown_action",
+        {
+          description: "A newly discovered operation with no gateway policy.",
+          inputSchema: z.object({}),
+          annotations: { readOnlyHint: false, openWorldHint: false },
+        },
+        async () => ({ content: [{ type: "text", text: "This tool should never be routed" }] }),
       );
       return server;
     },
