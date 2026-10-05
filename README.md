@@ -4,6 +4,25 @@ A local learning project for an MCP gateway. Coding clients use one MCP endpoint
 
 This project uses the MCP `2026-07-28` protocol revision on both sides of the gateway. The downstream services hold only mock data. Jira and the separate Agent Lab integration are later work.
 
+## Current architecture
+
+```mermaid
+flowchart LR
+    Client[MCP clients] -->|one /mcp endpoint| Gateway[Gateway server]
+    Portal[Management portal] -->|/api| Gateway
+    Gateway --> Access[EffectiveTools]
+    Gateway --> Catalog[IntegrationCatalog]
+    Gateway --> Calls[ToolCallOutcomes]
+    Access --> Store[GatewayStore]
+    Catalog --> Store
+    Catalog -->|discover and refresh| Downstream[GitLab and Analytics MCP servers]
+    Calls -->|route tool calls| Downstream
+    Calls --> Store
+    Calls --> Audit[AuditLog]
+```
+
+`IntegrationCatalog` keeps the last-known discovered tools and availability. `EffectiveTools` applies curated policy, each user's credential, and opt-in to decide which tools appear and can be called. `ToolCallOutcomes` forwards calls and records trace IDs and outcomes. `GatewayStore` persists user state and catalog snapshots; `AuditLog` persists call records. The gateway server connects these modules to the public MCP and portal routes.
+
 ## Start locally
 
 Requirements: Node.js 20 or newer and pnpm 11.9.0.
