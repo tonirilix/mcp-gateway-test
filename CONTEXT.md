@@ -18,3 +18,6 @@ A discovered tool that a user is eligible to use, has opted into, and has a cred
 
 **Opt-in**:
 A user's choice to enable a specific eligible tool. It can be recorded before the user connects the integration and does not by itself make the tool effective.
+
+**Call outcome**:
+The gateway's classification of an attempted tool call, including preflight rejections, downstream tool errors, transport failures, and success. Each recorded outcome has a correlation ID visible to the caller.

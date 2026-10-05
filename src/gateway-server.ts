@@ -1,15 +1,14 @@
 import { serve } from "@hono/node-server";
 import { once } from "node:events";
-import { randomUUID } from "node:crypto";
-import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { createMcpHonoApp, localhostHostValidation } from "@modelcontextprotocol/hono";
 import { createMcpHandler, fromJsonSchema, McpServer, type JsonSchemaType } from "@modelcontextprotocol/server";
 import { getCookie, setCookie } from "hono/cookie";
 import { GatewayStore, type UserId } from "./gateway-store.js";
-import { AuditLog, type CallOutcome } from "./audit-log.js";
+import { AuditLog } from "./audit-log.js";
 import { EffectiveTools } from "./effective-tools.js";
 import { IntegrationCatalog, type IntegrationConfig } from "./integration-catalog.js";
 import { makeClient } from "./mcp-client.js";
+import { ToolCallOutcomes } from "./tool-call-outcomes.js";
 
 type GatewayOptions = {
   port: number;
@@ -21,13 +20,6 @@ type GatewayOptions = {
   downstreamTimeoutMs?: number;
   portalSessionTtlMs?: number;
 };
-
-function failureOutcome(error: unknown): CallOutcome {
-  if (error instanceof SdkError && error.code === SdkErrorCode.RequestTimeout) return "timeout";
-  if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) return "timeout";
-  if (error instanceof TypeError) return "unavailable";
-  return "protocol_failure";
-}
 
 function bearerToken(request: Request) {
   return request.headers.get("Authorization")?.match(/^Bearer (.+)$/)?.[1];
@@ -42,6 +34,7 @@ export async function startGatewayServer(options: GatewayOptions) {
   });
   const audit = await AuditLog.open(`${options.stateFile}.audit.jsonl`);
   const downstreamTimeoutMs = options.downstreamTimeoutMs ?? 2_000;
+  const outcomes = new ToolCallOutcomes(audit, store, downstreamTimeoutMs);
   const configs: IntegrationConfig[] = [{ id: "gitlab", name: "GitLab", url: options.gitlabUrl }];
   if (options.analyticsUrl) configs.push({ id: "analytics", name: "Analytics", url: options.analyticsUrl });
 
@@ -59,7 +52,6 @@ export async function startGatewayServer(options: GatewayOptions) {
           { capabilities: { tools: {} } },
         );
         for (const { integration, tool, exposedName } of effectiveTools.forUser(userId)) {
-          const { config } = integration;
           server.registerTool(
             exposedName,
             {
@@ -67,45 +59,7 @@ export async function startGatewayServer(options: GatewayOptions) {
               inputSchema: fromJsonSchema(tool.inputSchema as unknown as JsonSchemaType),
               annotations: tool.annotations,
             },
-            async (args) => {
-              const correlationId = randomUUID();
-              const started = performance.now();
-              const finish = async (outcome: CallOutcome) => {
-                await audit.record({
-                  correlationId, at: new Date().toISOString(), userId,
-                  integrationId: config.id,
-                  exposedTool: exposedName,
-                  downstreamTool: tool.name,
-                  durationMs: Math.round(performance.now() - started), outcome,
-                });
-              };
-              const gatewayFailure = async (outcome: CallOutcome) => {
-                await finish(outcome);
-                return {
-                  isError: true,
-                  content: [{ type: "text" as const, text: `${outcome.replaceAll("_", " ")} (trace ${correlationId})` }],
-                  _meta: { "gateway/correlationId": correlationId, "gateway/outcome": outcome },
-                };
-              };
-              if (integration.status === "unavailable") return gatewayFailure("unavailable");
-              const credential = store.getCredential(userId, config.id);
-              if (!credential) return gatewayFailure("denied");
-              const { client, transport } = makeClient(`gateway-call-${config.id}`, config.url, credential);
-              try {
-                await client.connect(transport, { timeout: downstreamTimeoutMs });
-                const result = await client.callTool(
-                  { name: tool.name, arguments: args as Record<string, unknown> },
-                  { timeout: downstreamTimeoutMs },
-                );
-                const outcome = result.isError ? "tool_error" : "success";
-                await finish(outcome);
-                return { ...result, _meta: { ...result._meta, "gateway/correlationId": correlationId, "gateway/outcome": outcome } };
-              } catch (error) {
-                return await gatewayFailure(failureOutcome(error));
-              } finally {
-                await client.close();
-              }
-            },
+            async (args) => outcomes.execute(userId, integration, tool, args as Record<string, unknown>),
           );
         }
         return server;
@@ -225,33 +179,21 @@ export async function startGatewayServer(options: GatewayOptions) {
         if (request?.method === "tools/call" && typeof name === "string" && context.req.header("Mcp-Name") === name) {
           const decision = effectiveTools.resolve(userId, name);
           if (!decision?.effective) {
-            const correlationId = randomUUID();
-            await audit.record({
-              correlationId, at: new Date().toISOString(), userId,
+            return context.json(await outcomes.reject({
+              userId, exposedTool: name,
               integrationId: decision?.integration.config.id ?? "unknown",
-              exposedTool: name,
               downstreamTool: decision?.tool.name ?? "unknown",
-              durationMs: 0,
-              outcome: "denied",
-            });
-            return context.json({
-              jsonrpc: "2.0", id: request.id,
-              error: { code: -32001, message: `Tool unavailable (trace ${correlationId})` },
-            });
+              requestId: request.id, reason: "denied",
+            }));
           }
           const { integration, tool } = decision;
           const validation = await fromJsonSchema(tool.inputSchema as JsonSchemaType)["~standard"].validate(request.params?.arguments ?? {});
           if (validation.issues) {
-            const correlationId = randomUUID();
-            await audit.record({
-              correlationId, at: new Date().toISOString(), userId,
-              integrationId: integration.config.id, exposedTool: name,
-              downstreamTool: tool.name, durationMs: 0, outcome: "invalid_arguments",
-            });
-            return context.json({
-              jsonrpc: "2.0", id: request.id,
-              error: { code: -32602, message: `Invalid tool arguments (trace ${correlationId})` },
-            });
+            return context.json(await outcomes.reject({
+              userId, exposedTool: name,
+              integrationId: integration.config.id, downstreamTool: tool.name,
+              requestId: request.id, reason: "invalid_arguments",
+            }));
           }
         }
       }

@@ -89,6 +89,9 @@ test("calls expose correlation IDs and audit distinct outcomes without secrets",
       "success", "tool_error", "invalid_arguments", "timeout", "denied", "unavailable", "protocol_failure",
     ]);
     expect(calls[0]).toMatchObject({ userId: "standard", correlationId: successId });
+    expect(Object.keys(calls[4]).sort()).toEqual([
+      "at", "correlationId", "downstreamTool", "durationMs", "exposedTool", "integrationId", "outcome", "userId",
+    ]);
     const auditText = await readFile(join(directory, "state.json.audit.jsonl"), "utf8");
     expect(auditText).not.toContain("gl-standard");
     expect(auditText).not.toContain(identity.token);
