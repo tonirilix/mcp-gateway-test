@@ -129,15 +129,11 @@ export class GatewayStore {
     return this.state.catalogs?.[integrationId];
   }
 
-  async replaceCatalog(integrationId: string, tools: Tool[], fingerprints: Record<string, string>) {
-    const previous = this.state.catalogs?.[integrationId];
+  async replaceCatalog(integrationId: string, tools: Tool[], fingerprints: Record<string, string>, invalidatedNames: string[]) {
     for (const userId of ["standard", "admin"] as const) {
       const enabled = this.state.users[userId].enabledTools;
       if (!enabled) continue;
-      for (const name of Object.keys(enabled)) {
-        if (!name.startsWith(`${integrationId}__`)) continue;
-        if (previous?.fingerprints[name] !== fingerprints[name]) delete enabled[name];
-      }
+      for (const name of invalidatedNames) delete enabled[name];
     }
     this.state.catalogs ??= {};
     this.state.catalogs[integrationId] = { tools, fingerprints, capturedAt: new Date().toISOString() };

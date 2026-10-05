@@ -20,7 +20,7 @@ export function policyFor(integrationId: string, toolName: string) {
 }
 
 export class EffectiveTools<T extends Integration> {
-  constructor(private readonly integrations: T[], private readonly store: GatewayStore) {}
+  constructor(private readonly integrations: readonly T[], private readonly store: GatewayStore) {}
 
   private assess(userId: UserId, integration: T, tool: Tool) {
     const exposedName = `${integration.config.id}__${tool.name}`;

@@ -1,21 +1,15 @@
 import { serve } from "@hono/node-server";
 import { once } from "node:events";
-import { createHash, randomUUID } from "node:crypto";
-import { Client, SdkError, SdkErrorCode, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { randomUUID } from "node:crypto";
+import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { createMcpHonoApp, localhostHostValidation } from "@modelcontextprotocol/hono";
-import { createMcpHandler, fromJsonSchema, McpServer, type JsonSchemaType, type Tool } from "@modelcontextprotocol/server";
+import { createMcpHandler, fromJsonSchema, McpServer, type JsonSchemaType } from "@modelcontextprotocol/server";
 import { getCookie, setCookie } from "hono/cookie";
 import { GatewayStore, type UserId } from "./gateway-store.js";
 import { AuditLog, type CallOutcome } from "./audit-log.js";
-import { EffectiveTools, policyFor } from "./effective-tools.js";
-
-type IntegrationConfig = { id: string; name: string; url: string };
-type IntegrationRuntime = {
-  config: IntegrationConfig;
-  tools: Tool[];
-  status: "available" | "unavailable";
-  capturedAt?: string;
-};
+import { EffectiveTools } from "./effective-tools.js";
+import { IntegrationCatalog, type IntegrationConfig } from "./integration-catalog.js";
+import { makeClient } from "./mcp-client.js";
 
 type GatewayOptions = {
   port: number;
@@ -39,17 +33,6 @@ function bearerToken(request: Request) {
   return request.headers.get("Authorization")?.match(/^Bearer (.+)$/)?.[1];
 }
 
-function makeClient(name: string, url: string, token?: string) {
-  const client = new Client(
-    { name, version: "0.1.0" },
-    { versionNegotiation: { mode: { pin: "2026-07-28" } } },
-  );
-  const transport = new StreamableHTTPClientTransport(new URL(url), token ? {
-    requestInit: { headers: { Authorization: `Bearer ${token}` } },
-  } : undefined);
-  return { client, transport };
-}
-
 export async function startGatewayServer(options: GatewayOptions) {
   const store = await GatewayStore.open({
     file: options.stateFile,
@@ -62,42 +45,11 @@ export async function startGatewayServer(options: GatewayOptions) {
   const configs: IntegrationConfig[] = [{ id: "gitlab", name: "GitLab", url: options.gitlabUrl }];
   if (options.analyticsUrl) configs.push({ id: "analytics", name: "Analytics", url: options.analyticsUrl });
 
-  const discovered: IntegrationRuntime[] = configs.map((config) => {
-    const cached = store.getCatalog(config.id);
-    return { config, tools: cached?.tools ?? [], status: "unavailable", capturedAt: cached?.capturedAt };
-  });
+  const catalog = await IntegrationCatalog.open(configs, store);
+  const discovered = catalog.all();
   const effectiveTools = new EffectiveTools(discovered, store);
 
-  async function refresh(integration: IntegrationRuntime) {
-    const { config } = integration;
-    const { client, transport } = makeClient(`gateway-discovery-${config.id}`, config.url);
-    try {
-      await client.connect(transport);
-      const { tools } = await client.listTools();
-      const fingerprints = Object.fromEntries(tools.map((tool) => [
-        `${config.id}__${tool.name}`,
-        createHash("sha256").update(JSON.stringify({
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-          annotations: tool.annotations,
-          policy: policyFor(config.id, tool.name),
-        })).digest("hex"),
-      ]));
-      await store.replaceCatalog(config.id, tools, fingerprints);
-      integration.tools = tools;
-      integration.status = "available";
-      integration.capturedAt = store.getCatalog(config.id)?.capturedAt;
-    } catch {
-      integration.status = "unavailable";
-    } finally {
-      await client.close();
-    }
-    return integration.status;
-  }
-
   try {
-    for (const integration of discovered) await refresh(integration);
-
     const handler = createMcpHandler(
       ({ requestInfo }) => {
         const userId = requestInfo && store.resolveGatewayToken(bearerToken(requestInfo));
@@ -195,7 +147,7 @@ export async function startGatewayServer(options: GatewayOptions) {
     app.put("/api/integrations/:id/credential", async (context) => {
       const userId = portalUser(getCookie(context, "gateway_session"));
       if (!userId) return context.json({ error: "Sign in required" }, 401);
-      const config = configs.find((item) => item.id === context.req.param("id"));
+      const config = catalog.find(context.req.param("id"))?.config;
       if (!config) return context.json({ error: "Unknown integration" }, 404);
       const body = await context.req.json() as { token?: string };
       if (!body.token?.trim()) return context.json({ error: "Credential is required" }, 400);
@@ -232,9 +184,9 @@ export async function startGatewayServer(options: GatewayOptions) {
     app.post("/api/integrations/:id/refresh", async (context) => {
       const userId = portalUser(getCookie(context, "gateway_session"));
       if (!userId) return context.json({ error: "Sign in required" }, 401);
-      const integration = discovered.find(({ config }) => config.id === context.req.param("id"));
+      const integration = catalog.find(context.req.param("id"));
       if (!integration) return context.json({ error: "Unknown integration" }, 404);
-      return context.json({ status: await refresh(integration) });
+      return context.json({ status: await catalog.refresh(integration.config.id) });
     });
 
     app.get("/api/catalog", (context) => {

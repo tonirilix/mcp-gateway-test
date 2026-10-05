@@ -10,6 +10,9 @@ A trusted downstream MCP server whose tools the gateway can discover and route t
 **Discovered tool**:
 A tool reported by an integration during discovery, before gateway policy and a user's choices are applied.
 
+**Catalog snapshot**:
+The last successfully discovered tool definitions for an integration. It remains visible as stale when the integration is unavailable.
+
 **Effective tool**:
 A discovered tool that a user is eligible to use, has opted into, and has a credential for. The user's MCP tool list contains only effective tools.
 
