@@ -14,6 +14,8 @@ Requirements: Node.js 20 or newer and pnpm 11.9.0.
 
 The single development command starts two mock MCP HTTP servers, the gateway, and the portal. The gateway is at `http://127.0.0.1:4100/mcp`. Keep the encryption key to reopen saved credentials. Local state and audit records live in ignored `.data/`. Changing the passwords in `.env` after first start does not change the seeded accounts; remove the local state to reset the demo.
 
+To inspect the effective MCP tool list in a browser, run `pnpm inspector` in another terminal (Node.js 22.19 or newer). Open the URL it prints. The editable **local-gateway** entry is preconfigured for Streamable HTTP and the `2026-07-28` protocol. In its **Settings → Custom Headers**, add `Authorization` with value `Bearer <gateway-token>`, then connect and open **Tools**. Create the gateway token in the portal; Inspector settings are stored in ignored `.data/inspector-catalog.json`.
+
 ## Complete demo
 
 1. Sign in as **standard**. Connect GitLab with `gl-standard` and Analytics with `an-standard`. These are fictional service tokens accepted only by the mock servers.

@@ -10,6 +10,7 @@
     "dev:analytics": "tsx src/analytics-main.ts",
     "dev:gateway": "tsx src/gateway-main.ts",
     "dev:portal": "vite",
+    "inspector": "node scripts/start-inspector.mjs",
     "demo": "tsx src/demo-client.ts",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
