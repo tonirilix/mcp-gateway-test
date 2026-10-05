@@ -88,3 +88,44 @@ test("each user opts into GitLab tools and disabled calls are denied", async () 
     await client.close();
   }
 });
+
+test("opt-in before connecting appears in MCP only after the credential is set", async () => {
+  const isolated = await startGatewayServer({
+    port: 0, gitlabUrl: gitlab.url, stateFile: join(directory, "preconnection-state.json"),
+    encryptionKey: Buffer.alloc(32, 7), seedPasswords: { standard: "standard-password", admin: "admin-password" },
+  });
+  try {
+    const login = await fetch(new URL("/api/login", isolated.url), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "standard", password: "standard-password" }),
+    });
+    const cookie = login.headers.get("set-cookie")!.split(";")[0];
+    const tokenResponse = await fetch(new URL("/api/token", isolated.url), { method: "POST", headers: { Cookie: cookie } });
+    const { token } = await tokenResponse.json();
+    const optIn = await fetch(new URL("/api/tools/gitlab__list_issues/enabled", isolated.url), {
+      method: "PUT", headers: { Cookie: cookie, "Content-Type": "application/json" }, body: JSON.stringify({ enabled: true }),
+    });
+    expect(optIn.status).toBe(200);
+
+    const client = new Client(
+      { name: "preconnection-opt-in-test", version: "0.1.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+    );
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(isolated.url), {
+        requestInit: { headers: { Authorization: `Bearer ${token}` } },
+      }));
+      expect((await client.listTools()).tools).toEqual([]);
+      const connected = await fetch(new URL("/api/integrations/gitlab/credential", isolated.url), {
+        method: "PUT", headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify({ token: "gl-standard" }),
+      });
+      expect(connected.status).toBe(200);
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["gitlab__list_issues"]);
+    } finally {
+      await client.close();
+    }
+  } finally {
+    await isolated.close();
+  }
+});

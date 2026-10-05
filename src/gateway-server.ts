@@ -7,6 +7,7 @@ import { createMcpHandler, fromJsonSchema, McpServer, type JsonSchemaType, type 
 import { getCookie, setCookie } from "hono/cookie";
 import { GatewayStore, type UserId } from "./gateway-store.js";
 import { AuditLog, type CallOutcome } from "./audit-log.js";
+import { EffectiveTools, policyFor } from "./effective-tools.js";
 
 type IntegrationConfig = { id: string; name: string; url: string };
 type IntegrationRuntime = {
@@ -32,21 +33,6 @@ function failureOutcome(error: unknown): CallOutcome {
   if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) return "timeout";
   if (error instanceof TypeError) return "unavailable";
   return "protocol_failure";
-}
-
-const toolPolicies: Record<string, { behavior: "read" | "write"; adminOnly: boolean }> = {
-  gitlab__list_issues: { behavior: "read", adminOnly: false },
-  gitlab__get_project: { behavior: "read", adminOnly: false },
-  gitlab__create_issue: { behavior: "write", adminOnly: false },
-  gitlab__delete_issue: { behavior: "write", adminOnly: false },
-  analytics__list_issues: { behavior: "read", adminOnly: false },
-  analytics__list_users: { behavior: "read", adminOnly: false },
-  analytics__create_user: { behavior: "write", adminOnly: true },
-  analytics__deactivate_user: { behavior: "write", adminOnly: true },
-};
-
-function policyFor(integrationId: string, toolName: string) {
-  return toolPolicies[`${integrationId}__${toolName}`];
 }
 
 function bearerToken(request: Request) {
@@ -80,6 +66,7 @@ export async function startGatewayServer(options: GatewayOptions) {
     const cached = store.getCatalog(config.id);
     return { config, tools: cached?.tools ?? [], status: "unavailable", capturedAt: cached?.capturedAt };
   });
+  const effectiveTools = new EffectiveTools(discovered, store);
 
   async function refresh(integration: IntegrationRuntime) {
     const { config } = integration;
@@ -119,61 +106,55 @@ export async function startGatewayServer(options: GatewayOptions) {
           { name: "mcp-gateway", version: "0.1.0" },
           { capabilities: { tools: {} } },
         );
-        for (const integration of discovered) {
-          const { config, tools } = integration;
-          if (!store.hasCredential(userId, config.id)) continue;
-          for (const tool of tools) {
-            const policy = policyFor(config.id, tool.name);
-            if (!policy || (policy.adminOnly && userId !== "admin")) continue;
-            if (!store.isEnabled(userId, `${config.id}__${tool.name}`)) continue;
-            server.registerTool(
-              `${config.id}__${tool.name}`,
-              {
-                description: tool.description,
-                inputSchema: fromJsonSchema(tool.inputSchema as unknown as JsonSchemaType),
-                annotations: tool.annotations,
-              },
-              async (args) => {
-                const correlationId = randomUUID();
-                const started = performance.now();
-                const finish = async (outcome: CallOutcome) => {
-                  await audit.record({
-                    correlationId, at: new Date().toISOString(), userId,
-                    integrationId: config.id,
-                    exposedTool: `${config.id}__${tool.name}`,
-                    downstreamTool: tool.name,
-                    durationMs: Math.round(performance.now() - started), outcome,
-                  });
+        for (const { integration, tool, exposedName } of effectiveTools.forUser(userId)) {
+          const { config } = integration;
+          server.registerTool(
+            exposedName,
+            {
+              description: tool.description,
+              inputSchema: fromJsonSchema(tool.inputSchema as unknown as JsonSchemaType),
+              annotations: tool.annotations,
+            },
+            async (args) => {
+              const correlationId = randomUUID();
+              const started = performance.now();
+              const finish = async (outcome: CallOutcome) => {
+                await audit.record({
+                  correlationId, at: new Date().toISOString(), userId,
+                  integrationId: config.id,
+                  exposedTool: exposedName,
+                  downstreamTool: tool.name,
+                  durationMs: Math.round(performance.now() - started), outcome,
+                });
+              };
+              const gatewayFailure = async (outcome: CallOutcome) => {
+                await finish(outcome);
+                return {
+                  isError: true,
+                  content: [{ type: "text" as const, text: `${outcome.replaceAll("_", " ")} (trace ${correlationId})` }],
+                  _meta: { "gateway/correlationId": correlationId, "gateway/outcome": outcome },
                 };
-                const gatewayFailure = async (outcome: CallOutcome) => {
-                  await finish(outcome);
-                  return {
-                    isError: true,
-                    content: [{ type: "text" as const, text: `${outcome.replaceAll("_", " ")} (trace ${correlationId})` }],
-                    _meta: { "gateway/correlationId": correlationId, "gateway/outcome": outcome },
-                  };
-                };
-                if (integration.status === "unavailable") return gatewayFailure("unavailable");
-                const credential = store.getCredential(userId, config.id);
-                if (!credential) return gatewayFailure("denied");
-                const { client, transport } = makeClient(`gateway-call-${config.id}`, config.url, credential);
-                try {
-                  await client.connect(transport, { timeout: downstreamTimeoutMs });
-                  const result = await client.callTool(
-                    { name: tool.name, arguments: args as Record<string, unknown> },
-                    { timeout: downstreamTimeoutMs },
-                  );
-                  const outcome = result.isError ? "tool_error" : "success";
-                  await finish(outcome);
-                  return { ...result, _meta: { ...result._meta, "gateway/correlationId": correlationId, "gateway/outcome": outcome } };
-                } catch (error) {
-                  return await gatewayFailure(failureOutcome(error));
-                } finally {
-                  await client.close();
-                }
-              },
-            );
-          }
+              };
+              if (integration.status === "unavailable") return gatewayFailure("unavailable");
+              const credential = store.getCredential(userId, config.id);
+              if (!credential) return gatewayFailure("denied");
+              const { client, transport } = makeClient(`gateway-call-${config.id}`, config.url, credential);
+              try {
+                await client.connect(transport, { timeout: downstreamTimeoutMs });
+                const result = await client.callTool(
+                  { name: tool.name, arguments: args as Record<string, unknown> },
+                  { timeout: downstreamTimeoutMs },
+                );
+                const outcome = result.isError ? "tool_error" : "success";
+                await finish(outcome);
+                return { ...result, _meta: { ...result._meta, "gateway/correlationId": correlationId, "gateway/outcome": outcome } };
+              } catch (error) {
+                return await gatewayFailure(failureOutcome(error));
+              } finally {
+                await client.close();
+              }
+            },
+          );
         }
         return server;
       },
@@ -236,14 +217,10 @@ export async function startGatewayServer(options: GatewayOptions) {
       const userId = portalUser(getCookie(context, "gateway_session"));
       if (!userId) return context.json({ error: "Sign in required" }, 401);
       const name = context.req.param("name");
-      const integration = discovered.find(({ config, tools }) =>
-        tools.some((tool) => `${config.id}__${tool.name}` === name),
-      );
-      if (!integration) return context.json({ error: "Unknown tool" }, 404);
-      const originalName = integration.tools.find((tool) => `${integration.config.id}__${tool.name}` === name)!.name;
-      const policy = policyFor(integration.config.id, originalName);
-      if (!policy) return context.json({ error: "Tool has no gateway policy" }, 403);
-      if (policy.adminOnly && userId !== "admin") {
+      const decision = effectiveTools.resolve(userId, name);
+      if (!decision) return context.json({ error: "Unknown tool" }, 404);
+      if (!decision.policy) return context.json({ error: "Tool has no gateway policy" }, 403);
+      if (!decision.eligible) {
         return context.json({ error: "Admin access required" }, 403);
       }
       const body = await context.req.json() as { enabled?: boolean };
@@ -264,26 +241,14 @@ export async function startGatewayServer(options: GatewayOptions) {
       const userId = portalUser(getCookie(context, "gateway_session"));
       if (!userId) return context.json({ error: "Sign in required" }, 401);
       return context.json({
-        integrations: discovered.map(({ config, tools, status, capturedAt }) => ({
-          id: config.id,
-          name: config.name,
-          status,
-          stale: status === "unavailable" && Boolean(capturedAt),
-          lastRefreshedAt: capturedAt,
-          connected: store.hasCredential(userId, config.id),
-          tools: tools.map((tool) => {
-            const policy = policyFor(config.id, tool.name);
-            return {
-              name: `${config.id}__${tool.name}`,
-              originalName: tool.name,
-              description: tool.description,
-              inputSchema: tool.inputSchema,
-              behavior: policy?.behavior ?? "unclassified",
-              adminOnly: policy?.adminOnly ?? false,
-              eligible: Boolean(policy && (!policy.adminOnly || userId === "admin")),
-              enabled: store.isEnabled(userId, `${config.id}__${tool.name}`),
-            };
-          }),
+        integrations: discovered.map((integration) => ({
+          id: integration.config.id,
+          name: integration.config.name,
+          status: integration.status,
+          stale: integration.status === "unavailable" && Boolean(integration.capturedAt),
+          lastRefreshedAt: integration.capturedAt,
+          connected: store.hasCredential(userId, integration.config.id),
+          tools: effectiveTools.catalogFor(userId, integration),
         })),
       });
     });
@@ -306,18 +271,14 @@ export async function startGatewayServer(options: GatewayOptions) {
         } | null;
         const name = request?.params?.name;
         if (request?.method === "tools/call" && typeof name === "string" && context.req.header("Mcp-Name") === name) {
-          const integration = discovered.find(({ config, tools }) => tools.some((tool) => `${config.id}__${tool.name}` === name));
-          const originalName = integration?.tools.find((tool) => `${integration.config.id}__${tool.name}` === name)?.name;
-          const policy = integration && originalName ? policyFor(integration.config.id, originalName) : undefined;
-          const allowed = integration && originalName && policy && store.hasCredential(userId, integration.config.id) &&
-            store.isEnabled(userId, name) && (!policy.adminOnly || userId === "admin");
-          if (!allowed) {
+          const decision = effectiveTools.resolve(userId, name);
+          if (!decision?.effective) {
             const correlationId = randomUUID();
             await audit.record({
               correlationId, at: new Date().toISOString(), userId,
-              integrationId: integration?.config.id ?? "unknown",
+              integrationId: decision?.integration.config.id ?? "unknown",
               exposedTool: name,
-              downstreamTool: originalName ?? "unknown",
+              downstreamTool: decision?.tool.name ?? "unknown",
               durationMs: 0,
               outcome: "denied",
             });
@@ -326,14 +287,14 @@ export async function startGatewayServer(options: GatewayOptions) {
               error: { code: -32001, message: `Tool unavailable (trace ${correlationId})` },
             });
           }
-          const tool = integration.tools.find((candidate) => candidate.name === originalName)!;
+          const { integration, tool } = decision;
           const validation = await fromJsonSchema(tool.inputSchema as JsonSchemaType)["~standard"].validate(request.params?.arguments ?? {});
           if (validation.issues) {
             const correlationId = randomUUID();
             await audit.record({
               correlationId, at: new Date().toISOString(), userId,
               integrationId: integration.config.id, exposedTool: name,
-              downstreamTool: originalName, durationMs: 0, outcome: "invalid_arguments",
+              downstreamTool: tool.name, durationMs: 0, outcome: "invalid_arguments",
             });
             return context.json({
               jsonrpc: "2.0", id: request.id,

@@ -1,0 +1,17 @@
+# MCP Gateway
+
+The gateway presents tools from trusted downstream MCP integrations to individual users.
+
+## Language
+
+**Integration**:
+A trusted downstream MCP server whose tools the gateway can discover and route to.
+
+**Discovered tool**:
+A tool reported by an integration during discovery, before gateway policy and a user's choices are applied.
+
+**Effective tool**:
+A discovered tool that a user is eligible to use, has opted into, and has a credential for. The user's MCP tool list contains only effective tools.
+
+**Opt-in**:
+A user's choice to enable a specific eligible tool. It can be recorded before the user connects the integration and does not by itself make the tool effective.
